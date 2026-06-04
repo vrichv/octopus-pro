@@ -9,7 +9,8 @@ import {
     Activity,
     TrendingUp,
     Globe,
-    Key
+    Key,
+    Settings
 } from 'lucide-react';
 import { useUpdateChannel, useDeleteChannel, type Channel, type UpdateChannelRequest } from '@/api/endpoints/channel';
 import {
@@ -50,6 +51,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                 last_use_time_stamp: k.last_use_time_stamp,
                 total_cost: k.total_cost,
                 remark: k.remark,
+                key_proxy: k.key_proxy,
             }))
             : [{ enabled: true, channel_key: '', remark: '' }],
         model: channel.model,
@@ -58,6 +60,9 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         auto_sync: channel.auto_sync,
         auto_group: channel.auto_group,
         match_regex: channel.match_regex ?? '',
+        rate_limit: channel.rate_limit ?? '',
+        model_rate_limit: channel.model_rate_limit ?? '',
+        key_mode: channel.key_mode ?? 0,
     });
     const t = useTranslations('channel.detail');
 
@@ -114,7 +119,13 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             // Empty string means "clear" for patch semantics; backend maps it to NULL.
             req.match_regex = nextMatchRegex;
         }
-
+        const nextRateLimit = formData.rate_limit.trim();
+        const curRateLimit = channel.rate_limit ?? '';
+        if (nextRateLimit !== curRateLimit) req.rate_limit = nextRateLimit;
+        const nextModelRateLimit = formData.model_rate_limit.trim();
+        const curModelRateLimit = channel.model_rate_limit ?? '';
+        if (nextModelRateLimit !== curModelRateLimit) req.model_rate_limit = nextModelRateLimit;
+        if ((formData.key_mode ?? 0) !== (channel.key_mode ?? 0)) req.key_mode = formData.key_mode;
         const originalKeys = channel.keys;
         const originalByID = new Map(originalKeys.map((k) => [k.id, k]));
         const nextKeys = formData.keys ?? [];
@@ -124,19 +135,25 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
 
         const keys_to_add = nextKeys
             .filter((k) => !k.id && k.channel_key.trim())
-            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key, remark: k.remark ?? '' }));
+            .map((k) => ({
+                enabled: k.enabled,
+                channel_key: k.channel_key,
+                remark: k.remark ?? '',
+                key_proxy: k.key_proxy?.trim() || '',
+            }));
 
         const keys_to_update = nextKeys
             .filter((k) => typeof k.id === 'number' && originalByID.has(k.id as number))
             .map((k) => {
                 const orig = originalByID.get(k.id as number)!;
-                const u: { id: number; enabled?: boolean; channel_key?: string; remark?: string } = { id: k.id as number };
+                const u: { id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy?: string } = { id: k.id as number };
                 if (k.enabled !== orig.enabled) u.enabled = k.enabled;
                 if (k.channel_key !== orig.channel_key) u.channel_key = k.channel_key;
                 if ((k.remark ?? '') !== orig.remark) u.remark = k.remark ?? '';
+                if ((k.key_proxy ?? '') !== (orig.key_proxy ?? '')) u.key_proxy = k.key_proxy ?? '';
                 return Object.keys(u).length > 1 ? u : null;
             })
-            .filter((u) => u !== null) as Array<{ id: number; enabled?: boolean; channel_key?: string; remark?: string }>;
+            .filter((u) => u !== null) as Array<{ id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy?: string }>;
 
         if (keys_to_add.length > 0) req.keys_to_add = keys_to_add;
         if (keys_to_update.length > 0) req.keys_to_update = keys_to_update;
@@ -346,6 +363,45 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                     </div>
                                 </section>
 
+                                {/* Configuration */}
+                                <section className="space-y-3">
+                                    <h4 className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                        <Settings className="size-3.5" />
+                                        {t('sections.configuration')}
+                                    </h4>
+                                    <dl className="grid gap-3 grid-cols-1 sm:grid-cols-2">
+                                        <div className="rounded-2xl border bg-card p-3 sm:p-4 transition-colors hover:bg-accent/5">
+                                            <dt className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
+                                                <Key className="size-4 text-primary" />
+                                                {t('sections.keyStrategy')}
+                                            </dt>
+                                            <dd className="text-lg font-bold text-card-foreground">
+                                                {channel.key_mode === 1 ? t('sections.keyModeRoundRobin') : t('sections.keyModeCost')}
+                                            </dd>
+                                        </div>
+                                        <div className="rounded-2xl border bg-card p-3 sm:p-4 transition-colors hover:bg-accent/5">
+                                            <dt className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
+                                                <Activity className="size-4 text-chart-3" />
+                                                {t('sections.keyRateLimit')}
+                                            </dt>
+                                            <dd className="text-lg font-bold text-card-foreground">
+                                                {channel.rate_limit || <span className="text-muted-foreground text-sm font-normal">—</span>}
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                    {channel.model_rate_limit && (
+                                        <div className="rounded-2xl border bg-card p-3 sm:p-4 transition-colors hover:bg-accent/5">
+                                            <dt className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
+                                                <Activity className="size-4 text-chart-5" />
+                                                {t('sections.modelRateLimit')}
+                                            </dt>
+                                            <dd className="text-sm font-mono text-card-foreground break-all">
+                                                {channel.model_rate_limit}
+                                            </dd>
+                                        </div>
+                                    )}
+                                </section>
+
                                 {/* Keys */}
                                 <section className="space-y-3">
                                     <h4 className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -366,6 +422,12 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                 {key.remark && (
                                                     <span className="text-xs text-muted-foreground truncate max-w-24" title={key.remark}>
                                                         {key.remark}
+                                                    </span>
+                                                )}
+
+                                                {key.key_proxy && (
+                                                    <span className="flex items-center gap-1 shrink-0" title="Proxy enabled">
+                                                        <Globe className="size-3 text-muted-foreground" />
                                                     </span>
                                                 )}
 

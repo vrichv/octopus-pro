@@ -27,6 +27,9 @@ export function CreateDialogContent() {
         enabled: true,
         proxy: false,
         match_regex: '',
+        rate_limit: '',
+        model_rate_limit: '',
+        key_mode: 0,
     });
     const t = useTranslations('channel.create');
 
@@ -38,7 +41,7 @@ export function CreateDialogContent() {
         }));
         const normalizedKeys = formData.keys
             .filter((k) => k.channel_key.trim())
-            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key, remark: k.remark ?? '' }));
+            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key, remark: k.remark ?? '', key_proxy: k.key_proxy?.trim() || '' }));
         const normalizedHeaders = (formData.custom_header ?? [])
             .map((h) => ({ header_key: h.header_key.trim(), header_value: h.header_value }))
             .filter((h) => h.header_key && h.header_value !== '');
@@ -61,6 +64,9 @@ export function CreateDialogContent() {
                 channel_proxy: channelProxy,
                 param_override: paramOverride,
                 match_regex: formData.match_regex.trim(),
+                rate_limit: formData.rate_limit.trim(),
+                model_rate_limit: formData.model_rate_limit.trim(),
+                key_mode: formData.key_mode,
             },
             {
                 onSuccess: () => {
@@ -79,6 +85,9 @@ export function CreateDialogContent() {
                         enabled: true,
                         proxy: false,
                         match_regex: '',
+                        rate_limit: '',
+                        model_rate_limit: '',
+                        key_mode: 0,
                     });
                     setIsOpen(false);
                 }

@@ -27,6 +27,61 @@ func ChannelHttpClient(channel *model.Channel) (*http.Client, error) {
 	}
 }
 
+// KeyHttpClient 返回针对指定 ChannelKey 的 HTTP 客户端。
+// 代理优先级：key.KeyProxy > channel.ChannelProxy > 系统代理 > 直连
+func KeyHttpClient(channel *model.Channel, key *model.ChannelKey) (*http.Client, error) {
+	if channel == nil {
+		return nil, errors.New("channel is nil")
+	}
+	if key != nil && strings.TrimSpace(key.KeyProxy) != "" {
+		return client.GetHTTPClientCustomProxy(strings.TrimSpace(key.KeyProxy))
+	}
+	return ChannelHttpClient(channel)
+}
+
+// ProxyDesc 返回用于日志的代理描述，脱敏展示。
+func ProxyDesc(channel *model.Channel, key *model.ChannelKey) string {
+	if key != nil && strings.TrimSpace(key.KeyProxy) != "" {
+		proxy := strings.TrimSpace(key.KeyProxy)
+		return maskProxySuffix(proxy)
+	}
+	if channel != nil && channel.ChannelProxy != nil && strings.TrimSpace(*channel.ChannelProxy) != "" {
+		proxy := strings.TrimSpace(*channel.ChannelProxy)
+		return maskProxySuffix(proxy)
+	}
+	if channel != nil && channel.Proxy {
+		return "system"
+	}
+	return "none"
+}
+
+// maskProxySuffix 脱敏代理 URL，用单个 * 替换 password。
+// http://user:pass@host:port → http://user:*@host:port
+func maskProxySuffix(proxy string) string {
+	atIdx := strings.Index(proxy, "@")
+	if atIdx < 0 {
+		return proxy
+	}
+	protoEnd := strings.Index(proxy, "://")
+	if protoEnd < 0 {
+		return proxy
+	}
+	userPart := proxy[protoEnd+3 : atIdx]
+	if colonIdx := strings.Index(userPart, ":"); colonIdx >= 0 {
+		return proxy[:protoEnd+3+colonIdx+1] + "*" + proxy[atIdx:]
+	}
+	return proxy
+}
+
+// MaskKeySuffix 脱敏 Key，仅保留 ***{最后4位}。
+// 若 Key 长度 <= 4 则直接返回 *** 掩码。
+func MaskKeySuffix(key string) string {
+	if len(key) <= 4 {
+		return "***"
+	}
+	return "***" + key[len(key)-4:]
+}
+
 func ChannelBaseUrlDelayUpdate(channel *model.Channel, ctx context.Context) {
 	if channel == nil {
 		return

@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"time"
+
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/gin-gonic/gin"
@@ -22,7 +24,9 @@ type relayRun struct {
 type relayAttempt struct {
 	*relayRun
 
-	outAdapter transformer.Outbound
-	channel    *dbmodel.Channel
-	usedKey    dbmodel.ChannelKey
+	outAdapter  transformer.Outbound
+	channel     *dbmodel.Channel
+	usedKey     dbmodel.ChannelKey
+	statusCode  int           // 上游 HTTP 状态码
+	retryAfter  time.Duration // 429 响应中 Retry-After 指定的冷却时长
 }

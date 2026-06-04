@@ -23,6 +23,7 @@ export interface ChannelKeyFormItem {
     last_use_time_stamp?: number;
     total_cost?: number;
     remark?: string;
+    key_proxy?: string;
 }
 
 export interface ChannelFormData {
@@ -40,6 +41,9 @@ export interface ChannelFormData {
     auto_sync: boolean;
     auto_group: AutoGroupType;
     match_regex: string;
+    rate_limit: string;
+    model_rate_limit: string;
+    key_mode: number;
 }
 
 export interface ChannelFormProps {
@@ -339,6 +343,13 @@ export function ChannelForm({
                                 placeholder={t('remark')}
                                 className="rounded-xl w-32"
                             />
+                            <Input
+                                type="text"
+                                value={k.key_proxy ?? ''}
+                                onChange={(e) => handleUpdateKey(idx, { key_proxy: e.target.value })}
+                                placeholder={t('keyProxyPlaceholder')}
+                                className="rounded-xl w-40"
+                            />
                             <Switch
                                 checked={k.enabled}
                                 onCheckedChange={(checked) => handleUpdateKey(idx, { enabled: checked })}
@@ -499,6 +510,53 @@ export function ChannelForm({
                             </div>
                         </div>
 
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label htmlFor={`${idPrefix}-key-mode`} className="text-sm font-medium text-card-foreground">
+                                    {t('keyMode')}
+                                </label>
+                                <Select
+                                    value={String(formData.key_mode)}
+                                    onValueChange={(value) => onFormDataChange({ ...formData, key_mode: Number(value) })}
+                                >
+                                    <SelectTrigger id={`${idPrefix}-key-mode`} className="rounded-xl w-full border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className='rounded-xl'>
+                                        <SelectItem className='rounded-xl' value="0">{t('keyModeCost')}</SelectItem>
+                                        <SelectItem className='rounded-xl' value="1">{t('keyModeRoundRobin')}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <label htmlFor={`${idPrefix}-rate-limit`} className="text-sm font-medium text-card-foreground">
+                                    {t('rateLimit')}
+                                </label>
+                                <Input
+                                    id={`${idPrefix}-rate-limit`}
+                                    type="text"
+                                    value={formData.rate_limit}
+                                    onChange={(e) => onFormDataChange({ ...formData, rate_limit: e.target.value })}
+                                    placeholder={t('rateLimitPlaceholder')}
+                                    className="rounded-xl"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label htmlFor={`${idPrefix}-model-rate-limit`} className="text-sm font-medium text-card-foreground">
+                                {t('modelRateLimit')}
+                            </label>
+                            <Input
+                                id={`${idPrefix}-model-rate-limit`}
+                                type="text"
+                                value={formData.model_rate_limit}
+                                onChange={(e) => onFormDataChange({ ...formData, model_rate_limit: e.target.value })}
+                                placeholder={t('modelRateLimitPlaceholder')}
+                                className="rounded-xl"
+                            />
+                        </div>
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">
                                 <label className="text-sm font-medium text-card-foreground">

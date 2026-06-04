@@ -467,7 +467,13 @@
                 "tokens": "Token 使用",
                 "costs": "成本详情",
                 "baseUrls": "Base URLs",
-                "keys": "密钥"
+                "keys": "密钥",
+                "configuration": "配置",
+                "keyStrategy": "Key 调度策略",
+                "keyRateLimit": "限流",
+                "modelRateLimit": "Model 限流",
+                "keyModeCost": "成本优先",
+                "keyModeRoundRobin": "轮询"
             },
             "noBaseUrls": "暂无 Base URL",
             "noKeys": "暂无密钥",
@@ -541,7 +547,16 @@
             "autoGroupRegex": "正则匹配",
             "matchRegex": "匹配正则",
             "matchRegexPlaceholder": "可选：用于匹配请求模型名称的正则表达式",
-            "remark": "备注"
+            "remark": "备注",
+            "keyMode": "Key 调度策略",
+            "keyModeCost": "成本优先",
+            "keyModeRoundRobin": "轮询",
+            "rateLimit": "限流",
+            "rateLimitPlaceholder": "可选：Key 级默认限流，如 100/1h, 2/1m",
+            "modelRateLimit": "Model 限流",
+            "modelRateLimitPlaceholder": "可选：Model 级限流，如 gpt-4=2/1m,claude-3:free=10/1h",
+            "keyProxy": "Key 代理",
+            "keyProxyPlaceholder": "可选：代理地址"
         }
     }
 }

@@ -467,7 +467,13 @@
                 "tokens": "Token Usage",
                 "costs": "Cost Details",
                 "baseUrls": "Base URLs",
-                "keys": "Keys"
+                "keys": "Keys",
+                "configuration": "Configuration",
+                "keyStrategy": "Key Strategy",
+                "keyRateLimit": "Rate Limit",
+                "modelRateLimit": "Model Rate Limit",
+                "keyModeCost": "Cost First",
+                "keyModeRoundRobin": "Round Robin"
             },
             "noBaseUrls": "No Base URLs",
             "noKeys": "No Keys",
@@ -541,7 +547,16 @@
             "autoGroupRegex": "Regex",
             "matchRegex": "Match Regex",
             "matchRegexPlaceholder": "Optional: regex pattern to match request model names",
-            "remark": "Remark"
+            "remark": "Remark",
+            "keyMode": "Key Strategy",
+            "keyModeCost": "Cost First",
+            "keyModeRoundRobin": "Round Robin",
+            "rateLimit": "Rate Limit",
+            "rateLimitPlaceholder": "Optional: per-key rate limit, e.g. 100/1h, 2/1m",
+            "modelRateLimit": "Model Rate Limit",
+            "modelRateLimitPlaceholder": "Optional: model-specific limits, e.g. gpt-4=2/1m,claude-3:free=10/1h",
+            "keyProxy": "Key Proxy",
+            "keyProxyPlaceholder": "Optional: proxy URL"
         }
     }
 }

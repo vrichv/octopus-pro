@@ -44,6 +44,7 @@ export type ChannelKey = {
     last_use_time_stamp: number;
     total_cost: number;
     remark: string;
+   key_proxy: string;
 };
 
 /**
@@ -65,6 +66,9 @@ export type Channel = {
     param_override?: string | null;
     channel_proxy?: string | null;
     match_regex?: string | null;
+   rate_limit: string;
+   model_rate_limit: string;
+   key_mode: number;
     stats: StatsChannel;
 };
 
@@ -83,7 +87,7 @@ export type CreateChannelRequest = {
     type: ChannelType;
     enabled?: boolean;
     base_urls: BaseUrl[];
-    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark'>>;
+    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark' | 'key_proxy'>>;
     model: string;
     custom_model?: string;
     proxy?: boolean;
@@ -93,6 +97,9 @@ export type CreateChannelRequest = {
     channel_proxy?: string | null;
     param_override?: string | null;
     match_regex?: string | null;
+    rate_limit?: string;
+    model_rate_limit?: string;
+    key_mode?: number;
 };
 
 /**
@@ -113,9 +120,12 @@ export type UpdateChannelRequest = {
     channel_proxy?: string | null;
     param_override?: string | null;
     match_regex?: string | null;
+    rate_limit?: string;
+    model_rate_limit?: string;
+    key_mode?: number;
     // keys diff
-    keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark'>>;
-    keys_to_update?: Array<{ id: number; enabled?: boolean; channel_key?: string; remark?: string }>;
+    keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark' | 'key_proxy'>>;
+    keys_to_update?: Array<{ id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy?: string }>;
     keys_to_delete?: number[];
 };
 

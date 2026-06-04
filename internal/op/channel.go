@@ -38,7 +38,9 @@ func ChannelCreate(channel *model.Channel, ctx context.Context) error {
 	return nil
 }
 
-// ChannelKeyUpdate 仅更新 ChannelKey 的内存缓存（不落库），并标记为需要在 SaveCache 时写入数据库。
+// ChannelKeyUpdate 更新 ChannelKey 的内存缓存。
+// - Enabled 变更立即写 DB（确保管理操作立即可见）
+// - 运行时字段（StatusCode, LastUseTimeStamp, TotalCost）标记为延迟持久化
 func ChannelKeyUpdate(key model.ChannelKey) error {
 	if key.ID == 0 || key.ChannelID == 0 {
 		return fmt.Errorf("invalid channel key")
@@ -47,11 +49,20 @@ func ChannelKeyUpdate(key model.ChannelKey) error {
 	if !ok {
 		return fmt.Errorf("channel not found")
 	}
+
+	dbConn := db.GetDB()
+
 	if len(ch.Keys) > 0 {
 		keys := make([]model.ChannelKey, len(ch.Keys))
 		copy(keys, ch.Keys)
 		for i := range keys {
 			if keys[i].ID == key.ID {
+				// 如果 Enabled 字段变化，立即写 DB
+				if keys[i].Enabled != key.Enabled {
+					if err := dbConn.Model(&model.ChannelKey{}).Where("id = ?", key.ID).Update("enabled", key.Enabled).Error; err != nil {
+						return fmt.Errorf("failed to update key enabled in db: %w", err)
+					}
+				}
 				keys[i] = key
 				break
 			}
@@ -65,6 +76,7 @@ func ChannelKeyUpdate(key model.ChannelKey) error {
 	channelKeyCacheNeedUpdateLock.Unlock()
 	return nil
 }
+
 func ChannelBaseUrlUpdate(channelID int, baseUrl []model.BaseUrl) error {
 	ch, ok := channelCache.Get(channelID)
 	if !ok {
@@ -177,6 +189,18 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 		selectFields = append(selectFields, "match_regex")
 		updates.MatchRegex = req.MatchRegex
 	}
+	if req.RateLimit != nil {
+		selectFields = append(selectFields, "rate_limit")
+		updates.RateLimit = *req.RateLimit
+	}
+	if req.ModelRateLimit != nil {
+		selectFields = append(selectFields, "model_rate_limit")
+		updates.ModelRateLimit = *req.ModelRateLimit
+	}
+	if req.KeyMode != nil {
+		selectFields = append(selectFields, "key_mode")
+		updates.KeyMode = *req.KeyMode
+	}
 
 	// 只有当有字段需要更新时才执行 UPDATE
 	if len(selectFields) > 0 {
@@ -207,6 +231,9 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 			if ku.Remark != nil {
 				updates["remark"] = *ku.Remark
 			}
+			if ku.KeyProxy != nil {
+				updates["key_proxy"] = *ku.KeyProxy
+			}
 			if len(updates) == 0 {
 				continue
 			}
@@ -228,6 +255,7 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 				Enabled:    ka.Enabled,
 				ChannelKey: ka.ChannelKey,
 				Remark:     ka.Remark,
+				KeyProxy:   ka.KeyProxy,
 			})
 		}
 		if err := tx.Create(&newKeys).Error; err != nil {
@@ -321,7 +349,7 @@ func ChannelDel(id int, ctx context.Context) error {
 		}
 	}
 	StatsChannelDel(id)
-
+	model.CleanupKeyRRIndex(id)
 	// 刷新受影响的分组缓存
 	for _, groupID := range affectedGroupIDs {
 		if err := groupRefreshCacheByID(groupID, ctx); err != nil {

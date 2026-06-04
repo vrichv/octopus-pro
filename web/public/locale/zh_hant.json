@@ -467,7 +467,13 @@
                 "tokens": "Token 使用",
                 "costs": "成本詳情",
                 "baseUrls": "Base URLs",
-                "keys": "金鑰"
+                "keys": "金鑰",
+                "configuration": "配置",
+                "keyStrategy": "Key 調度策略",
+                "keyRateLimit": "限流",
+                "modelRateLimit": "Model 限流",
+                "keyModeCost": "成本優先",
+                "keyModeRoundRobin": "輪詢"
             },
             "noBaseUrls": "暫無 Base URL",
             "noKeys": "暫無金鑰",
@@ -541,7 +547,16 @@
             "autoGroupRegex": "正規比對",
             "matchRegex": "匹配正規",
             "matchRegexPlaceholder": "可選：用於匹配請求模型名稱的正規表示式",
-            "remark": "備註"
+            "remark": "備註",
+            "keyMode": "Key 調度策略",
+            "keyModeCost": "成本優先",
+            "keyModeRoundRobin": "輪詢",
+            "rateLimit": "限流",
+            "rateLimitPlaceholder": "可選：Key 級預設限流，如 100/1h, 2/1m",
+            "modelRateLimit": "Model 限流",
+            "modelRateLimitPlaceholder": "可選：Model 級限流，如 gpt-4=2/1m,claude-3:free=10/1h",
+            "keyProxy": "Key 代理",
+            "keyProxyPlaceholder": "可選：代理位址"
         }
     }
 }
