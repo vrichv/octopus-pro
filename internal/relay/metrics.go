@@ -147,9 +147,11 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		relayLog.Cost = m.Stats.InputCost + m.Stats.OutputCost
 	}
 
-	relayLog.RequestContent = m.requestContent()
-	if len(m.InternalResponse) > 0 {
-		relayLog.ResponseContent = string(m.InternalResponse)
+	if contentEnabled, _ := op.SettingGetBool(model.SettingKeyRelayLogContentEnabled); contentEnabled {
+		relayLog.RequestContent = m.requestContent()
+		if len(m.InternalResponse) > 0 {
+			relayLog.ResponseContent = string(m.InternalResponse)
+		}
 	}
 	if err != nil {
 		relayLog.Error = err.Error()

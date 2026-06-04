@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useTranslations } from 'next-intl';
-import { ScrollText, Calendar, Trash2 } from 'lucide-react';
+import { ScrollText, Calendar, Trash2, FileText } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -19,14 +19,17 @@ export function SettingLog() {
     const [enabled, setEnabled] = useState(true);
     const [keepPeriod, setKeepPeriod] = useState('7');
     const [isClearing, setIsClearing] = useState(false);
+    const [contentEnabled, setContentEnabled] = useState(false);
 
     const initialEnabled = useRef(true);
     const initialKeepPeriod = useRef('7');
+    const initialContentEnabled = useRef(false);
 
     useEffect(() => {
         if (settings) {
             const enabledSetting = settings.find(s => s.key === SettingKey.RelayLogKeepEnabled);
             const periodSetting = settings.find(s => s.key === SettingKey.RelayLogKeepPeriod);
+            const contentSetting = settings.find(s => s.key === SettingKey.RelayLogContentEnabled);
             if (enabledSetting) {
                 const isEnabled = enabledSetting.value === 'true';
                 queueMicrotask(() => setEnabled(isEnabled));
@@ -35,6 +38,11 @@ export function SettingLog() {
             if (periodSetting) {
                 queueMicrotask(() => setKeepPeriod(periodSetting.value));
                 initialKeepPeriod.current = periodSetting.value;
+            }
+            if (contentSetting) {
+                const isContentEnabled = contentSetting.value === 'true';
+                queueMicrotask(() => setContentEnabled(isContentEnabled));
+                initialContentEnabled.current = isContentEnabled;
             }
         }
     }, [settings]);
@@ -47,6 +55,19 @@ export function SettingLog() {
                 onSuccess: () => {
                     toast.success(t('saved'));
                     initialEnabled.current = checked;
+                }
+            }
+        );
+    };
+
+    const handleContentEnabledChange = (checked: boolean) => {
+        setContentEnabled(checked);
+        setSetting.mutate(
+            { key: SettingKey.RelayLogContentEnabled, value: checked ? 'true' : 'false' },
+            {
+                onSuccess: () => {
+                    toast.success(t('saved'));
+                    initialContentEnabled.current = checked;
                 }
             }
         );
@@ -96,6 +117,18 @@ export function SettingLog() {
                 <Switch
                     checked={enabled}
                     onCheckedChange={handleEnabledChange}
+                />
+            </div>
+
+            {/* 是否记录请求/响应内容 */}
+            <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                    <FileText className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">{t('log.contentEnabled.label')}</span>
+                </div>
+                <Switch
+                    checked={contentEnabled}
+                    onCheckedChange={handleContentEnabledChange}
                 />
             </div>
 

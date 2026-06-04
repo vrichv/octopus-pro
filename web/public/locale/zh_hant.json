@@ -326,6 +326,9 @@
             "enabled": {
                 "label": "啟用歷史日誌"
             },
+            "contentEnabled": {
+                "label": "記錄請求/回應內容"
+            },
             "keepPeriod": {
                 "label": "日誌保存天數",
                 "placeholder": "請輸入天數"

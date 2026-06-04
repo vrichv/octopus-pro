@@ -326,6 +326,9 @@
             "enabled": {
                 "label": "启用历史日志"
             },
+            "contentEnabled": {
+                "label": "记录请求/响应内容"
+            },
             "keepPeriod": {
                 "label": "日志保存天数",
                 "placeholder": "请输入天数"
