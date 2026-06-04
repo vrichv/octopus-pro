@@ -209,6 +209,10 @@ func GroupDel(id int, ctx context.Context) error {
 
 	groupCache.Del(id)
 	groupMap.Del(group.Name)
+
+	// 清理 API Key 中已删除组名的引用，防止残留模型名
+	CleanGroupFromAPIKeySupportedModels(group.Name, ctx)
+
 	return nil
 }
 

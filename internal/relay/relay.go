@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/pipeline"
@@ -45,7 +45,17 @@ func newRelayRun(c *gin.Context, inboundType llm.APIFormat, inAdapter transforme
 	}
 
 	if supportedModels := c.GetString("supported_models"); supportedModels != "" {
-		if !slices.Contains(strings.Split(supportedModels, ","), internalRequest.Model) {
+		// 与当前可用模型取交集，过滤已失效的模型名
+		availableModels, _ := op.GroupListModel(c.Request.Context())
+		supportedModelsArray := lo.Map(strings.Split(supportedModels, ","), func(s string, _ int) string {
+			return strings.TrimSpace(s)
+		})
+		effectiveModels := lo.Filter(supportedModelsArray, func(m string, _ int) bool {
+			return lo.Contains(availableModels, m)
+		})
+		// 交集为空 → 所有指定模型均已失效，视为无限制
+		if len(effectiveModels) > 0 && !lo.Contains(effectiveModels, internalRequest.Model) {
+			log.Warnf("relay model not supported: model=%s supported_models=%s effective=%v", internalRequest.Model, supportedModels, effectiveModels)
 			err := errors.New("model not supported")
 			resp.Error(c, http.StatusBadRequest, err.Error())
 			return nil, err

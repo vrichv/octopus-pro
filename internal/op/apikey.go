@@ -3,6 +3,7 @@ package op
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
@@ -87,4 +88,38 @@ func apiKeyRefreshCache(ctx context.Context) error {
 		apiKeyIDMap.Set(apiKey.APIKey, apiKey.ID)
 	}
 	return nil
+}
+
+// CleanGroupFromAPIKeySupportedModels 从所有 API Key 的 SupportedModels 中移除指定的组名。
+// 组删除后调用，防止残留模型名导致模型拒绝。
+func CleanGroupFromAPIKeySupportedModels(groupName string, ctx context.Context) {
+	var keys []model.APIKey
+	if err := db.GetDB().WithContext(ctx).
+		Where("supported_models LIKE ?", "%"+groupName+"%").
+		Find(&keys).Error; err != nil {
+		return
+	}
+	for _, key := range keys {
+		parts := strings.Split(key.SupportedModels, ",")
+		cleaned := make([]string, 0, len(parts))
+		for _, p := range parts {
+			trimmed := strings.TrimSpace(p)
+			if trimmed != "" && trimmed != groupName {
+				cleaned = append(cleaned, trimmed)
+			}
+		}
+		newVal := strings.Join(cleaned, ", ")
+		if newVal == key.SupportedModels {
+			continue
+		}
+		if err := db.GetDB().WithContext(ctx).
+			Model(&model.APIKey{}).Where("id = ?", key.ID).
+			Update("supported_models", newVal).Error; err != nil {
+			continue
+		}
+		if k, ok := apiKeyCache.Get(key.ID); ok {
+			k.SupportedModels = newVal
+			apiKeyCache.Set(key.ID, k)
+		}
+	}
 }

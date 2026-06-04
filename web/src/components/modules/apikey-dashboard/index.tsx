@@ -273,17 +273,19 @@ export function APIKeyDashboard() {
                     </div>
 
                     {/* Supported Models */}
-                    {info.supported_models && info.supported_models.trim().length > 0 && (
-                        <div className="rounded-2xl border bg-card p-6">
-                            <div className="flex items-center gap-2 mb-4">
-                                <Layers className="w-5 h-5 text-chart-3" />
-                                <span className="font-semibold">{t('supportedModels')}</span>
-                            </div>
+                    <div className="rounded-2xl border bg-card p-6">
+                        <div className="flex items-center gap-2 mb-4">
+                            <Layers className="w-5 h-5 text-chart-3" />
+                            <span className="font-semibold">{t('supportedModels')}</span>
+                        </div>
+                        {supportedModels.length > 0 ? (
                             <div className="flex flex-wrap gap-2">
                                 {supportedModelButtons}
                             </div>
-                        </div>
-                    )}
+                        ) : (
+                            <span className="text-sm text-muted-foreground">{t('unlimited')}</span>
+                        )}
+                    </div>
                 </PageWrapper>
             </main>
         </div>

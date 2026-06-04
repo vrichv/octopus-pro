@@ -70,9 +70,13 @@ func getModelList(c *gin.Context) {
 		supportedModels := lo.Map(strings.Split(apiKey.SupportedModels, ","), func(s string, _ int) string {
 			return strings.TrimSpace(s)
 		})
-		models = lo.Filter(models, func(m string, _ int) bool {
-			return lo.Contains(supportedModels, m)
+		effective := lo.Filter(supportedModels, func(m string, _ int) bool {
+			return lo.Contains(models, m)
 		})
+		if len(effective) > 0 {
+			models = effective
+		}
+		// 交集为空 → 所有指定模型均已失效，视为无限制
 	}
 
 	if c.GetString("request_type") == "anthropic" {
