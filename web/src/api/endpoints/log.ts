@@ -22,6 +22,7 @@ export interface ChannelAttempt {
     duration: number;       // 耗时(毫秒)
     sticky?: boolean;
     msg?: string;
+    channel_key_suffix?: string; // 出站 Key 的脱敏后缀
 }
 
 /**

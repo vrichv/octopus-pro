@@ -120,16 +120,17 @@ func (it *Iterator) SkipCircuitBreak(channelID, channelKeyID int, channelName st
 }
 
 // StartAttempt 开始一次真实转发尝试，返回 Span 用于记录结果
-func (it *Iterator) StartAttempt(channelID, channelKeyID int, channelName string) *AttemptSpan {
+func (it *Iterator) StartAttempt(channelID, channelKeyID int, channelName, keySuffix string) *AttemptSpan {
 	it.count++
 	return &AttemptSpan{
 		attempt: model.ChannelAttempt{
-			ChannelID:    channelID,
-			ChannelKeyID: channelKeyID,
-			ChannelName:  channelName,
-			ModelName:    it.candidates[it.index].ModelName,
-			AttemptNum:   it.count,
-			Sticky:       it.IsSticky(),
+			ChannelID:        channelID,
+			ChannelKeyID:     channelKeyID,
+			ChannelName:      channelName,
+			ModelName:        it.candidates[it.index].ModelName,
+			AttemptNum:       it.count,
+			Sticky:           it.IsSticky(),
+			ChannelKeySuffix: keySuffix,
 		},
 		startTime: time.Now(),
 		iter:      it,

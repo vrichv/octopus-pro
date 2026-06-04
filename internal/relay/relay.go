@@ -182,7 +182,7 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 // run manages the complete lifecycle of a single channel attempt.
 // Returns (written, error): written=true means the response has been written back to the client, caller should not retry.
 func (ra *relayAttempt) run() (bool, error) {
-	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name)
+	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name, helper.MaskKeySuffix(ra.usedKey.ChannelKey))
 
 	upstreamStatusCode, fwdErr := ra.forward()
 	if fwdErr == nil && upstreamStatusCode == 0 {

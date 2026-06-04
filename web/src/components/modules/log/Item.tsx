@@ -191,6 +191,11 @@ export function LogCard({ log }: { log: RelayLog }) {
         [log.actual_model_name]
     );
     const requestAPIKeyName = useMemo(() => log.request_api_key_name?.trim() ?? '', [log.request_api_key_name]);
+    const outboundKeySuffix = useMemo(() => {
+        if (!log.attempts?.length) return '';
+        const lastWithSuffix = [...log.attempts].reverse().find(a => a.channel_key_suffix);
+        return lastWithSuffix?.channel_key_suffix ?? '';
+    }, [log.attempts]);
 
     const hasError = !!log.error;
     const hasMultipleAttempts = log.attempts && log.attempts.length > 1;
@@ -235,7 +240,7 @@ export function LogCard({ log }: { log: RelayLog }) {
                                     <Pin className="size-3.5 shrink-0 text-amber-500" />
                                 )}
                             </div>
-                            <div className="grid grid-cols-2 md:grid-cols-7 gap-x-4 gap-y-2 text-xs tabular-nums text-muted-foreground">
+                            <div className="grid grid-cols-2 md:grid-cols-8 gap-x-4 gap-y-2 text-xs tabular-nums text-muted-foreground">
                                 <div className="flex items-center gap-1.5">
                                     <Clock className="size-3.5 shrink-0" style={{ color: brandColor }} />
                                     <span>{formatTime(log.time)}</span>
@@ -245,6 +250,14 @@ export function LogCard({ log }: { log: RelayLog }) {
                                         <KeyRound className="size-3.5 shrink-0 text-orange-500" />
                                         <span className="truncate" title={requestAPIKeyName}>
                                             {requestAPIKeyName}
+                                        </span>
+                                    </div>
+                                )}
+                                {outboundKeySuffix && (
+                                    <div className="flex items-center gap-1.5">
+                                        <KeyRound className="size-3.5 shrink-0 text-blue-500" />
+                                        <span className="truncate font-mono" title={outboundKeySuffix}>
+                                            {outboundKeySuffix}
                                         </span>
                                     </div>
                                 )}
@@ -402,6 +415,14 @@ export function LogCard({ log }: { log: RelayLog }) {
                                                                             <span className="text-muted-foreground">
                                                                                 ({attempt.model_name})
                                                                             </span>
+                                                                            {attempt.channel_key_suffix && (
+                                                                                <>
+                                                                                    <KeyRound className="size-3 shrink-0 text-blue-400" />
+                                                                                    <span className="text-muted-foreground font-mono">
+                                                                                        {attempt.channel_key_suffix}
+                                                                                    </span>
+                                                                                </>
+                                                                            )}
                                                                             <span className="ml-auto text-muted-foreground tabular-nums font-mono">
                                                                                 {formatDuration(attempt.duration)}
                                                                             </span>
@@ -453,10 +474,6 @@ export function LogCard({ log }: { log: RelayLog }) {
                         </MorphingDialogDescription>
 
                         <div className="flex flex-wrap items-center gap-3 md:gap-4 pt-4 mt-auto text-xs text-muted-foreground shrink-0">
-                            <div className="flex items-center gap-1.5">
-                                <Clock className="size-3.5" style={{ color: brandColor }} />
-                                <span className="tabular-nums">{formatTime(log.time)}</span>
-                            </div>
                             {requestAPIKeyName && (
                                 <div className="flex min-w-0 items-center gap-1.5">
                                     <KeyRound className="size-3.5 shrink-0 text-orange-500" />
@@ -465,6 +482,18 @@ export function LogCard({ log }: { log: RelayLog }) {
                                     </span>
                                 </div>
                             )}
+                            {outboundKeySuffix && (
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                    <KeyRound className="size-3.5 shrink-0 text-blue-500" />
+                                    <span className="truncate font-mono" title={outboundKeySuffix}>
+                                        {outboundKeySuffix}
+                                    </span>
+                                </div>
+                            )}
+                            <div className="flex items-center gap-1.5">
+                                <Clock className="size-3.5" style={{ color: brandColor }} />
+                                <span className="tabular-nums">{formatTime(log.time)}</span>
+                            </div>
                             <div className="flex items-center gap-1.5">
                                 <Zap className="size-3.5 text-amber-500" />
                                 <span>{t('firstTokenTime')}: {formatDuration(log.ftut)}</span>

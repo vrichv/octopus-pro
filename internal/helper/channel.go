@@ -73,13 +73,13 @@ func maskProxySuffix(proxy string) string {
 	return proxy
 }
 
-// MaskKeySuffix 脱敏 Key，仅保留 ***{最后4位}。
-// 若 Key 长度 <= 4 则直接返回 *** 掩码。
+// MaskKeySuffix 脱敏 Key，仅保留 *{最后3位}。
+// 若 Key 长度 <= 3 则直接返回 * 掩码。
 func MaskKeySuffix(key string) string {
-	if len(key) <= 4 {
-		return "***"
+	if len(key) <= 3 {
+		return "*" + key
 	}
-	return "***" + key[len(key)-4:]
+	return "*" + key[len(key)-3:]
 }
 
 func ChannelBaseUrlDelayUpdate(channel *model.Channel, ctx context.Context) {
