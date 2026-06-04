@@ -33,6 +33,10 @@ func migrateChannelTypeToAxonhub(db *gorm.DB) error {
 		if err := db.Exec(`ALTER TABLE "channels" ALTER COLUMN "type" TYPE text USING "type"::text`).Error; err != nil {
 			return fmt.Errorf("failed to alter channels.type: %w", err)
 		}
+	case "sqlite":
+		// SQLite has flexible typing — no ALTER COLUMN needed.
+		// Any column affinity can hold TEXT values without issue.
+		// The UPDATE below handles the value migration.
 	}
 
 	typeExpr := `CAST("type" AS TEXT)`
