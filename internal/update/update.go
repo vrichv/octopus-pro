@@ -20,7 +20,7 @@ import (
 
 const (
 	updateUrl    = "https://github.com/vrichv/octopus-pro/releases/latest/download"
-	updateApiUrl = "https://api.github.com/repos/virchv/octopus-pro/releases/latest"
+	updateApiUrl = "https://api.github.com/repos/vrichv/octopus-pro/releases/latest"
 )
 
 type LatestInfo struct {
