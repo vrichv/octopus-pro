@@ -3,9 +3,9 @@ package op
 import (
 	"fmt"
 
-	"github.com/bestruirui/octopus/internal/db"
-	"github.com/bestruirui/octopus/internal/model"
-	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/vrichv/octopus-pro/internal/db"
+	"github.com/vrichv/octopus-pro/internal/model"
+	"github.com/vrichv/octopus-pro/internal/utils/log"
 )
 
 var userCache model.User

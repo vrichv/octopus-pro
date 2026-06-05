@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/vrichv/octopus-pro/internal/utils/log"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/pipeline"
 )

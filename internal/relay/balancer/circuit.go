@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bestruirui/octopus/internal/model"
-	"github.com/bestruirui/octopus/internal/op"
-	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/vrichv/octopus-pro/internal/model"
+	"github.com/vrichv/octopus-pro/internal/op"
+	"github.com/vrichv/octopus-pro/internal/utils/log"
 )
 
 // CircuitState 熔断器状态

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bestruirui/octopus/internal/client"
-	"github.com/bestruirui/octopus/internal/model"
-	"github.com/bestruirui/octopus/internal/op"
-	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/vrichv/octopus-pro/internal/client"
+	"github.com/vrichv/octopus-pro/internal/model"
+	"github.com/vrichv/octopus-pro/internal/op"
+	"github.com/vrichv/octopus-pro/internal/utils/log"
 )
 
 const llmPriceUrl = "https://models.dev/api.json"

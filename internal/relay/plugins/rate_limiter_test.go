@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bestruirui/octopus/internal/model"
+	"github.com/vrichv/octopus-pro/internal/model"
 	"github.com/looplj/axonhub/llm/httpclient"
 )
 

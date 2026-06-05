@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/bestruirui/octopus/internal/helper"
-	"github.com/bestruirui/octopus/internal/op"
-	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/vrichv/octopus-pro/internal/helper"
+	"github.com/vrichv/octopus-pro/internal/op"
+	"github.com/vrichv/octopus-pro/internal/utils/log"
 )
 
 func ChannelBaseUrlDelayTask() {

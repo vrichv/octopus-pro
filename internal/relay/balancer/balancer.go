@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/bestruirui/octopus/internal/model"
+	"github.com/vrichv/octopus-pro/internal/model"
 )
 
 var roundRobinCounter uint64

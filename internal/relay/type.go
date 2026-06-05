@@ -3,8 +3,8 @@ package relay
 import (
 	"time"
 
-	dbmodel "github.com/bestruirui/octopus/internal/model"
-	"github.com/bestruirui/octopus/internal/relay/balancer"
+	dbmodel "github.com/vrichv/octopus-pro/internal/model"
+	"github.com/vrichv/octopus-pro/internal/relay/balancer"
 	"github.com/gin-gonic/gin"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/transformer"

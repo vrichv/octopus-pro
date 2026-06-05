@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/bestruirui/octopus/internal/db"
-	"github.com/bestruirui/octopus/internal/model"
-	"github.com/bestruirui/octopus/internal/utils/cache"
-	"github.com/bestruirui/octopus/internal/utils/log"
-	"github.com/bestruirui/octopus/internal/utils/xstrings"
+	"github.com/vrichv/octopus-pro/internal/db"
+	"github.com/vrichv/octopus-pro/internal/model"
+	"github.com/vrichv/octopus-pro/internal/utils/cache"
+	"github.com/vrichv/octopus-pro/internal/utils/log"
+	"github.com/vrichv/octopus-pro/internal/utils/xstrings"
 )
 
 var channelCache = cache.New[int, model.Channel](16)

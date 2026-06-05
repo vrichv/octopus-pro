@@ -1,4 +1,4 @@
-<div align="center">
+ <div align="center">
 
 <img src="web/public/logo.svg" alt="Octopus Logo" width="120" height="120">
 
@@ -10,6 +10,15 @@
 
 </div>
 
+## ❤ Pro版本特性
+
+ - 😂 **自用修改** - AI代码，内网使用，能跑就行，不做保证
+
+-  🚀 **Key级代理** - 支持单独设置每个Key的代理地址
+-  🎯 **Key级调度** - 支持Key级的调度策略（成本优先或轮询）
+-  🚦 **限流** - 支持Key级，渠道级的限流配置
+-  💪 **增强健壮性** - 提升返回错误处理，日志增强，性能增强，Bug修复
+-  🔥 **基于最新版本** - 基于Dev最新版本，使用axonhub/llm
 
 ## ✨ 特性
 
@@ -32,20 +41,20 @@
 直接运行
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 bestrui/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/vrichv/octopus-pro
 ```
 
 或者使用 docker compose 运行
 
 ```bash
-wget https://raw.githubusercontent.com/bestruirui/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/vrichv/octopus-pro/refs/heads/dev/docker-compose.yml
 docker compose up -d
 ```
 
 
 ### 📦 从 Release 下载
 
-从 [Releases](https://github.com/bestruirui/octopus/releases) 下载对应平台的二进制文件，然后运行：
+从 [Releases](https://github.com/vrichv/octopus-pro/releases) 下载对应平台的二进制文件，然后运行：
 
 ```bash
 ./octopus start
@@ -60,7 +69,7 @@ docker compose up -d
 
 ```bash
 # 克隆项目
-git clone https://github.com/bestruirui/octopus.git
+git clone https://github.com/vrichv/octopus-pro.git
 cd octopus
 # 构建前端
 cd web && pnpm install && pnpm run build && cd ..
@@ -376,7 +385,7 @@ base_url = "http://127.0.0.1:8080/v1"
 ---
 
 ## 🤝 致谢
-
+- 👍 [octopus](https://github.com/bestruirui/octopus) - 原版地址
 - 🙏 [looplj/axonhub](https://github.com/looplj/axonhub) - 本项目的 LLM API 适配模块直接源自该仓库的实现
 - 📊 [sst/models.dev](https://github.com/sst/models.dev) - AI 模型数据库，提供模型价格数据
-- 🇨🇳 [AtomGit](https://atomgit.com/bestruirui/octopus) - 国内代码托管
+- 🇨🇳 [AtomGit](https://atomgit.com/bestruirui/octopus) - 原版国内代码托管

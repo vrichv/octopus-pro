@@ -6,10 +6,10 @@ import (
 	"maps"
 	"time"
 
-	"github.com/bestruirui/octopus/internal/model"
-	"github.com/bestruirui/octopus/internal/op"
-	"github.com/bestruirui/octopus/internal/price"
-	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/vrichv/octopus-pro/internal/model"
+	"github.com/vrichv/octopus-pro/internal/op"
+	"github.com/vrichv/octopus-pro/internal/price"
+	"github.com/vrichv/octopus-pro/internal/utils/log"
 	"github.com/looplj/axonhub/llm"
 )
 

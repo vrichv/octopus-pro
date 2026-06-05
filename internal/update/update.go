@@ -13,14 +13,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bestruirui/octopus/internal/client"
-	"github.com/bestruirui/octopus/internal/conf"
-	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/vrichv/octopus-pro/internal/client"
+	"github.com/vrichv/octopus-pro/internal/conf"
+	"github.com/vrichv/octopus-pro/internal/utils/log"
 )
 
 const (
-	updateUrl    = "https://github.com/bestruirui/octopus/releases/latest/download"
-	updateApiUrl = "https://api.github.com/repos/bestruirui/octopus/releases/latest"
+	updateUrl    = "https://github.com/vrichv/octopus-pro/releases/latest/download"
+	updateApiUrl = "https://api.github.com/repos/virchv/octopus-pro/releases/latest"
 )
 
 type LatestInfo struct {

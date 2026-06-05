@@ -6,10 +6,18 @@
 
 **A Simple, Beautiful, and Elegant LLM API Aggregation & Load Balancing Service for Individuals**
 
- English | [简体中文](README_zh.md)
+English | [简体中文](README_zh.md)
 
 </div>
 
+## ❤ Pro Version Features
+
+- 😂 **Personal fork** - AI-generated code, for internal use. If it runs, it's fine. No guarantees.
+- 🚀 **Key-level Proxy** - Set a separate proxy address for each API key
+- 🎯 **Key-level Scheduling** - Per-key scheduling strategy (cost priority or round robin)
+- 🚦 **Rate Limiting** - Per-key and per-channel rate limiting configuration
+- 💪 **Enhanced Robustness** - Improved error handling, enhanced logging, performance improvements, bug fixes
+- 🔥 **Based on latest version** - Built on the latest dev branch, using axonhub/llm
 
 ## ✨ Features
 
@@ -32,20 +40,20 @@
 Run directly:
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 bestrui/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/vrichv/octopus-pro
 ```
 
 Or use docker compose:
 
 ```bash
-wget https://raw.githubusercontent.com/bestruirui/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/vrichv/octopus-pro/refs/heads/dev/docker-compose.yml
 docker compose up -d
 ```
 
 
 ### 📦 Download from Release
 
-Download the binary for your platform from [Releases](https://github.com/bestruirui/octopus/releases), then run:
+Download the binary for your platform from [Releases](https://github.com/vrichv/octopus-pro/releases), then run:
 
 ```bash
 ./octopus start
@@ -60,7 +68,7 @@ Download the binary for your platform from [Releases](https://github.com/bestrui
 
 ```bash
 # Clone the repository
-git clone https://github.com/bestruirui/octopus.git
+git clone https://github.com/vrichv/octopus-pro.git
 cd octopus
 # Build frontend
 cd web && pnpm install && pnpm run build && cd ..
@@ -174,6 +182,7 @@ All configuration options can be overridden via environment variables using the 
 | `OCTOPUS_IMAGES_BODY_MAX_MB` | Images request body maximum size. Requests above this limit are rejected (optional, default 256) |
 | `OCTOPUS_IMAGES_BODY_TMP_DIR` | Images request body temporary directory (optional, default `./cache`) |
 | `OCTOPUS_IMAGES_BODY_TMP_CLEANUP_HOURS` | Startup cleanup threshold for temporary files (optional, default 24) |
+
 
 ## 📸 Screenshots
 
@@ -306,7 +315,6 @@ Since the program handles numerous statistics, writing to the database on every 
 
 > ⚠️ **Important**: When exiting the program, use proper shutdown methods (like `Ctrl+C` or sending `SIGTERM` signal) to ensure in-memory statistics are correctly written to the database. **Do NOT use `kill -9` or other forced termination methods**, as this may result in statistics data loss.
 
----
 
 ## 🔌 Client Integration
 
@@ -371,10 +379,11 @@ Edit `~/.codex/auth.json`
 }
 ```
 
+
 ---
 
 ## 🤝 Acknowledgments
-
+- 👍 [octopus](https://github.com/bestruirui/octopus) - Original project
 - 🙏 [looplj/axonhub](https://github.com/looplj/axonhub) - The LLM API adaptation module in this project is directly derived from this repository
 - 📊 [sst/models.dev](https://github.com/sst/models.dev) - AI model database providing model pricing data
-- 🇨🇳 [AtomGit](https://atomgit.com/bestruirui/octopus) - China-based code hosting
+- 🇨🇳 [AtomGit](https://atomgit.com/bestruirui/octopus) - China-based code hosting for the original project
