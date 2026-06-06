@@ -480,6 +480,7 @@
             },
             "noBaseUrls": "暂无 Base URL",
             "noKeys": "暂无密钥",
+            "keyProxyEnabled": "已启用代理",
             "metrics": {
                 "totalRequests": "总请求",
                 "totalToken": "总 Token",

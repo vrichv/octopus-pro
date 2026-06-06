@@ -428,7 +428,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                 )}
 
                                                 {key.key_proxy && (
-                                                    <span className="flex items-center gap-1 shrink-0" title="Proxy enabled">
+                                                    <span className="flex items-center gap-1 shrink-0" title={t('keyProxyEnabled')}>
                                                         <Globe className="size-3 text-muted-foreground" />
                                                     </span>
                                                 )}

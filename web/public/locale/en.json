@@ -480,6 +480,7 @@
             },
             "noBaseUrls": "No Base URLs",
             "noKeys": "No Keys",
+            "keyProxyEnabled": "Proxy enabled",
             "metrics": {
                 "totalRequests": "Total Requests",
                 "totalToken": "Total Tokens",
