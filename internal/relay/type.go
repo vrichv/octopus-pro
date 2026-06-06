@@ -3,11 +3,11 @@ package relay
 import (
 	"time"
 
-	dbmodel "github.com/vrichv/octopus-pro/internal/model"
-	"github.com/vrichv/octopus-pro/internal/relay/balancer"
 	"github.com/gin-gonic/gin"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/transformer"
+	dbmodel "github.com/vrichv/octopus-pro/internal/model"
+	"github.com/vrichv/octopus-pro/internal/relay/balancer"
 )
 
 // relayRun 保存一次客户端请求在负载均衡循环中共享的状态。
@@ -24,9 +24,9 @@ type relayRun struct {
 type relayAttempt struct {
 	*relayRun
 
-	outAdapter  transformer.Outbound
-	channel     *dbmodel.Channel
-	usedKey     dbmodel.ChannelKey
-	statusCode  int           // 上游 HTTP 状态码
-	retryAfter  time.Duration // 429 响应中 Retry-After 指定的冷却时长
+	outAdapter transformer.Outbound
+	channel    *dbmodel.Channel
+	usedKey    dbmodel.ChannelKey
+	statusCode int           // 上游 HTTP 状态码
+	retryAfter time.Duration // 429 响应中 Retry-After 指定的冷却时长
 }

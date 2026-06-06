@@ -10,6 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/looplj/axonhub/llm"
+	"github.com/looplj/axonhub/llm/httpclient"
+	"github.com/looplj/axonhub/llm/pipeline"
+	"github.com/looplj/axonhub/llm/pipeline/stream"
+	"github.com/looplj/axonhub/llm/streams"
+	"github.com/looplj/axonhub/llm/transformer"
+	"github.com/samber/lo"
 	"github.com/vrichv/octopus-pro/internal/helper"
 	dbmodel "github.com/vrichv/octopus-pro/internal/model"
 	"github.com/vrichv/octopus-pro/internal/op"
@@ -17,14 +25,6 @@ import (
 	"github.com/vrichv/octopus-pro/internal/relay/plugins"
 	"github.com/vrichv/octopus-pro/internal/server/resp"
 	"github.com/vrichv/octopus-pro/internal/utils/log"
-	"github.com/gin-gonic/gin"
-	"github.com/samber/lo"
-	"github.com/looplj/axonhub/llm"
-	"github.com/looplj/axonhub/llm/httpclient"
-	"github.com/looplj/axonhub/llm/pipeline"
-	"github.com/looplj/axonhub/llm/pipeline/stream"
-	"github.com/looplj/axonhub/llm/streams"
-	"github.com/looplj/axonhub/llm/transformer"
 )
 
 // Handler returns a Gin handler that processes inbound requests and forwards them to the upstream service.
@@ -185,17 +185,23 @@ func (ra *relayAttempt) run() (bool, error) {
 	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name, helper.MaskKeySuffix(ra.usedKey.ChannelKey))
 
 	upstreamStatusCode, fwdErr := ra.forward()
-	if fwdErr == nil && upstreamStatusCode == 0 {
-		upstreamStatusCode = http.StatusOK
+	nowSec := time.Now().Unix()
+	statusCode := upstreamStatusCode
+	if fwdErr == nil && statusCode == 0 {
+		statusCode = http.StatusOK
 	}
-	ra.usedKey.StatusCode = upstreamStatusCode
-	ra.usedKey.LastUseTimeStamp = time.Now().Unix()
+	if fwdErr != nil && statusCode == 0 {
+		statusCode = ra.statusCode
+	}
 
 	// success path
 	if fwdErr == nil {
-		ra.usedKey.TotalCost += ra.metrics.Stats.InputCost + ra.metrics.Stats.OutputCost
-		ra.usedKey.ConsecutiveAuthErrors = 0 // reset auth error count on success
-		op.ChannelKeyUpdate(ra.usedKey)
+		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{
+			StatusCode:       statusCode,
+			LastUseTimeStamp: nowSec,
+			CostDelta:        ra.metrics.Stats.InputCost + ra.metrics.Stats.OutputCost,
+			AuthResult:       op.ChannelKeyAuthSuccess,
+		})
 
 		span.End(dbmodel.AttemptSuccess, "")
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
@@ -208,27 +214,20 @@ func (ra *relayAttempt) run() (bool, error) {
 	}
 
 	// error path: handle by status code
-	statusCode := upstreamStatusCode
-	if statusCode == 0 {
-		statusCode = ra.statusCode
-	}
 
 	switch statusCode {
 	case http.StatusBadRequest: // 400 — abort, no retry
-		op.ChannelKeyUpdate(ra.usedKey)
+		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone})
 		span.End(dbmodel.AttemptFailed, fwdErr.Error())
 		resp.Error(ra.c, statusCode, fwdErr.Error())
 		return true, fmt.Errorf("channel %s bad request (400): %v", ra.channel.Name, fwdErr)
 
 	case http.StatusUnauthorized, http.StatusForbidden: // 401/403 — accumulate auth errors, disable key within 5min window
-		ra.usedKey.ConsecutiveAuthErrors++
-		ra.usedKey.LastAuthErrorTime = time.Now().Unix()
-		if ra.usedKey.ConsecutiveAuthErrors >= 3 {
-			ra.usedKey.Enabled = false
+		latestKey := ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthFailure})
+		if latestKey.ID != 0 && !latestKey.Enabled {
 			log.Warnf("key %d disabled after %d consecutive auth errors (channel: %s)",
-				ra.usedKey.ID, ra.usedKey.ConsecutiveAuthErrors, ra.channel.Name)
+				latestKey.ID, latestKey.ConsecutiveAuthErrors, ra.channel.Name)
 		}
-		op.ChannelKeyUpdate(ra.usedKey)
 		span.End(dbmodel.AttemptFailed, fwdErr.Error())
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),
@@ -238,10 +237,11 @@ func (ra *relayAttempt) run() (bool, error) {
 		return ra.c.Writer.Written(), fmt.Errorf("channel %s auth error (%d): %v", ra.channel.Name, statusCode, fwdErr)
 
 	case http.StatusTooManyRequests: // 429 — cool down this key
+		update := op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone}
 		if ra.retryAfter > 0 {
-			ra.usedKey.RetryAfter = int64(ra.retryAfter.Seconds())
+			update.RetryAfter = int64(ra.retryAfter.Seconds())
 		}
-		op.ChannelKeyUpdate(ra.usedKey)
+		ra.applyKeyRuntimeUpdate(update)
 		span.End(dbmodel.AttemptFailed, fwdErr.Error())
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),
@@ -250,7 +250,7 @@ func (ra *relayAttempt) run() (bool, error) {
 		return ra.c.Writer.Written(), fmt.Errorf("channel %s rate limited (429): %v", ra.channel.Name, fwdErr)
 
 	case http.StatusNotFound: // 404 — switch channel
-		op.ChannelKeyUpdate(ra.usedKey)
+		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone})
 		span.End(dbmodel.AttemptFailed, fwdErr.Error())
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),
@@ -260,7 +260,7 @@ func (ra *relayAttempt) run() (bool, error) {
 		return ra.c.Writer.Written(), fmt.Errorf("channel %s not found (404): %v", ra.channel.Name, fwdErr)
 
 	default: // 5xx/network error → circuit breaker
-		op.ChannelKeyUpdate(ra.usedKey)
+		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone})
 		span.End(dbmodel.AttemptFailed, fwdErr.Error())
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),
@@ -269,6 +269,17 @@ func (ra *relayAttempt) run() (bool, error) {
 		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 		return ra.c.Writer.Written(), fmt.Errorf("channel %s failed: %v", ra.channel.Name, fwdErr)
 	}
+}
+
+func (ra *relayAttempt) applyKeyRuntimeUpdate(update op.ChannelKeyRuntimeUpdate) dbmodel.ChannelKey {
+	update.ChannelID = ra.channel.ID
+	update.KeyID = ra.usedKey.ID
+	key, err := op.ChannelKeyApplyRuntimeUpdate(update)
+	if err != nil {
+		log.Warnf("failed to update key runtime state (channel: %s, key: %d): %v", ra.channel.Name, ra.usedKey.ID, err)
+		return dbmodel.ChannelKey{}
+	}
+	return key
 }
 
 // parseRequest parses and validates the incoming request

@@ -3,7 +3,6 @@ package relay
 import (
 	"fmt"
 
-	dbmodel "github.com/vrichv/octopus-pro/internal/model"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/transformer"
 	"github.com/looplj/axonhub/llm/transformer/anthropic"
@@ -11,6 +10,7 @@ import (
 	"github.com/looplj/axonhub/llm/transformer/gemini"
 	"github.com/looplj/axonhub/llm/transformer/openai"
 	"github.com/looplj/axonhub/llm/transformer/openai/responses"
+	dbmodel "github.com/vrichv/octopus-pro/internal/model"
 )
 
 func newInbound(format llm.APIFormat) transformer.Inbound {

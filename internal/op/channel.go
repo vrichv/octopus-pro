@@ -3,7 +3,9 @@ package op
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/vrichv/octopus-pro/internal/db"
 	"github.com/vrichv/octopus-pro/internal/model"
@@ -16,6 +18,25 @@ var channelCache = cache.New[int, model.Channel](16)
 var channelKeyCache = cache.New[int, model.ChannelKey](16)
 var channelKeyCacheNeedUpdate = make(map[int]struct{})
 var channelKeyCacheNeedUpdateLock sync.Mutex
+var channelKeyRuntimeLock sync.Mutex
+
+type ChannelKeyAuthResult int
+
+const (
+	ChannelKeyAuthNone ChannelKeyAuthResult = iota
+	ChannelKeyAuthSuccess
+	ChannelKeyAuthFailure
+)
+
+type ChannelKeyRuntimeUpdate struct {
+	ChannelID        int
+	KeyID            int
+	StatusCode       int
+	LastUseTimeStamp int64
+	CostDelta        float64
+	RetryAfter       int64
+	AuthResult       ChannelKeyAuthResult
+}
 
 func ChannelList(ctx context.Context) ([]model.Channel, error) {
 	channels := make([]model.Channel, 0, channelCache.Len())
@@ -38,29 +59,30 @@ func ChannelCreate(channel *model.Channel, ctx context.Context) error {
 	return nil
 }
 
-// ChannelKeyUpdate 更新 ChannelKey 的内存缓存。
-// - Enabled 变更立即写 DB（确保管理操作立即可见）
-// - 运行时字段（StatusCode, LastUseTimeStamp, TotalCost）标记为延迟持久化
+// ChannelKeyUpdate updates a complete ChannelKey in the in-memory caches for management and compatibility paths.
+// Relay runtime updates must use ChannelKeyApplyRuntimeUpdate so concurrent attempts merge deltas instead of overwriting state.
+// Enabled changes are written to DB immediately; runtime fields are marked for delayed persistence.
 func ChannelKeyUpdate(key model.ChannelKey) error {
 	if key.ID == 0 || key.ChannelID == 0 {
 		return fmt.Errorf("invalid channel key")
 	}
+
+	channelKeyRuntimeLock.Lock()
+	defer channelKeyRuntimeLock.Unlock()
+
 	ch, ok := channelCache.Get(key.ChannelID)
 	if !ok {
 		return fmt.Errorf("channel not found")
 	}
-
-	dbConn := db.GetDB()
 
 	if len(ch.Keys) > 0 {
 		keys := make([]model.ChannelKey, len(ch.Keys))
 		copy(keys, ch.Keys)
 		for i := range keys {
 			if keys[i].ID == key.ID {
-				// 如果 Enabled 字段变化，立即写 DB
 				if keys[i].Enabled != key.Enabled {
-					if err := dbConn.Model(&model.ChannelKey{}).Where("id = ?", key.ID).Update("enabled", key.Enabled).Error; err != nil {
-						return fmt.Errorf("failed to update key enabled in db: %w", err)
+					if err := updateChannelKeyEnabledDB(key.ID, key.Enabled); err != nil {
+						return err
 					}
 				}
 				keys[i] = key
@@ -71,10 +93,104 @@ func ChannelKeyUpdate(key model.ChannelKey) error {
 	}
 	channelCache.Set(key.ChannelID, ch)
 	channelKeyCache.Set(key.ID, key)
-	channelKeyCacheNeedUpdateLock.Lock()
-	channelKeyCacheNeedUpdate[key.ID] = struct{}{}
-	channelKeyCacheNeedUpdateLock.Unlock()
+	markChannelKeyCacheNeedUpdate(key.ID)
 	return nil
+}
+
+func ChannelKeyApplyRuntimeUpdate(update ChannelKeyRuntimeUpdate) (model.ChannelKey, error) {
+	if update.ChannelID == 0 || update.KeyID == 0 {
+		return model.ChannelKey{}, fmt.Errorf("invalid channel key runtime update")
+	}
+
+	channelKeyRuntimeLock.Lock()
+	defer channelKeyRuntimeLock.Unlock()
+
+	ch, ok := channelCache.Get(update.ChannelID)
+	if !ok {
+		return model.ChannelKey{}, fmt.Errorf("channel not found")
+	}
+	if len(ch.Keys) == 0 {
+		return model.ChannelKey{}, fmt.Errorf("channel key not found")
+	}
+
+	keys := make([]model.ChannelKey, len(ch.Keys))
+	copy(keys, ch.Keys)
+	keyIndex := -1
+	for i := range keys {
+		if keys[i].ID == update.KeyID {
+			keyIndex = i
+			break
+		}
+	}
+	if keyIndex < 0 {
+		return model.ChannelKey{}, fmt.Errorf("channel key not found")
+	}
+
+	current := keys[keyIndex]
+	nextKey := current
+	nextKey.TotalCost = current.TotalCost + update.CostDelta
+	nextKey.StatusCode = update.StatusCode
+	if update.LastUseTimeStamp > current.LastUseTimeStamp {
+		nextKey.LastUseTimeStamp = update.LastUseTimeStamp
+	}
+	if update.RetryAfter > 0 {
+		nextKey.RetryAfter = update.RetryAfter
+	}
+
+	switch update.AuthResult {
+	case ChannelKeyAuthNone:
+	case ChannelKeyAuthSuccess:
+		nextKey.ConsecutiveAuthErrors = 0
+		nextKey.LastAuthErrorTime = 0
+		nextKey.Enabled = true
+	case ChannelKeyAuthFailure:
+		eventTime := update.LastUseTimeStamp
+		if eventTime == 0 {
+			eventTime = time.Now().Unix()
+		}
+		if current.LastAuthErrorTime > 0 && eventTime-current.LastAuthErrorTime >= 300 {
+			nextKey.ConsecutiveAuthErrors = 0
+			nextKey.LastAuthErrorTime = 0
+			nextKey.Enabled = true
+		}
+		nextKey.ConsecutiveAuthErrors++
+		nextKey.LastAuthErrorTime = eventTime
+		if nextKey.ConsecutiveAuthErrors >= 3 {
+			nextKey.Enabled = false
+		}
+	default:
+		return model.ChannelKey{}, fmt.Errorf("invalid channel key auth result")
+	}
+
+	if current.Enabled != nextKey.Enabled {
+		if err := updateChannelKeyEnabledDB(update.KeyID, nextKey.Enabled); err != nil {
+			return model.ChannelKey{}, err
+		}
+	}
+
+	keys[keyIndex] = nextKey
+	ch.Keys = keys
+	channelCache.Set(update.ChannelID, ch)
+	channelKeyCache.Set(update.KeyID, nextKey)
+	markChannelKeyCacheNeedUpdate(update.KeyID)
+	return nextKey, nil
+}
+
+func updateChannelKeyEnabledDB(keyID int, enabled bool) error {
+	dbConn := db.GetDB()
+	if dbConn == nil {
+		return fmt.Errorf("db not initialized")
+	}
+	if err := dbConn.Model(&model.ChannelKey{}).Where("id = ?", keyID).Update("enabled", enabled).Error; err != nil {
+		return fmt.Errorf("failed to update key enabled in db: %w", err)
+	}
+	return nil
+}
+
+func markChannelKeyCacheNeedUpdate(keyID int) {
+	channelKeyCacheNeedUpdateLock.Lock()
+	channelKeyCacheNeedUpdate[keyID] = struct{}{}
+	channelKeyCacheNeedUpdateLock.Unlock()
 }
 
 func ChannelBaseUrlUpdate(channelID int, baseUrl []model.BaseUrl) error {
@@ -101,6 +217,7 @@ func ChannelKeySaveDB(ctx context.Context) error {
 	for id := range channelKeyCacheNeedUpdate {
 		keyIDs = append(keyIDs, id)
 	}
+	sort.Ints(keyIDs)
 	channelKeyCacheNeedUpdate = make(map[int]struct{})
 	channelKeyCacheNeedUpdateLock.Unlock()
 
@@ -109,12 +226,17 @@ func ChannelKeySaveDB(ctx context.Context) error {
 	}
 
 	dbConn := db.GetDB().WithContext(ctx)
-	for _, id := range keyIDs {
+	for i, id := range keyIDs {
 		k, ok := channelKeyCache.Get(id)
 		if !ok {
 			continue
 		}
 		if err := dbConn.Save(&k).Error; err != nil {
+			channelKeyCacheNeedUpdateLock.Lock()
+			for _, dirtyID := range keyIDs[i:] {
+				channelKeyCacheNeedUpdate[dirtyID] = struct{}{}
+			}
+			channelKeyCacheNeedUpdateLock.Unlock()
 			return err
 		}
 	}
