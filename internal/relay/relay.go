@@ -106,25 +106,34 @@ func (r *relayRun) run() {
 		default:
 		}
 
-		attempt, err := r.prepareAttempt()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if attempt == nil {
-			continue
-		}
+		// 对同一个渠道的多个 key 进行重试（429 时自动切换到下一个 key）
+		// 前一个 key 已被标记冷却，GetChannelKey 会跳过它并返回其他可用 key
+		for keyRetry := 0; keyRetry < 10; keyRetry++ {
+			attempt, err := r.prepareAttempt()
+			if err != nil {
+				lastErr = err
+				break
+			}
+			if attempt == nil {
+				break
+			}
 
-		written, err := attempt.run()
-		if err == nil {
-			r.metrics.Save(ctx, true, nil, r.iter.Attempts())
-			return
+			written, err := attempt.run()
+			if err == nil {
+				r.metrics.Save(ctx, true, nil, r.iter.Attempts())
+				return
+			}
+			if written {
+				r.metrics.Save(ctx, false, err, r.iter.Attempts())
+				return
+			}
+			lastErr = err
+
+			// 429 → 尝试渠道的下一个 key
+			if attempt.statusCode != http.StatusTooManyRequests {
+				break
+			}
 		}
-		if written {
-			r.metrics.Save(ctx, false, err, r.iter.Attempts())
-			return
-		}
-		lastErr = err
 	}
 
 	if lastErr == nil {
