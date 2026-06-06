@@ -283,6 +283,10 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 		selectFields = append(selectFields, "custom_model")
 		updates.CustomModel = *req.CustomModel
 	}
+	if req.ExcludedModel != nil {
+		selectFields = append(selectFields, "excluded_model")
+		updates.ExcludedModel = *req.ExcludedModel
+	}
 	if req.Proxy != nil {
 		selectFields = append(selectFields, "proxy")
 		updates.Proxy = *req.Proxy

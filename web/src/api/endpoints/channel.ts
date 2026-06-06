@@ -59,6 +59,7 @@ export type Channel = {
     keys: ChannelKey[];
     model: string;
     custom_model: string;
+    excluded_model: string;
     proxy: boolean;
     auto_sync: boolean;
     auto_group: AutoGroupType;
@@ -90,6 +91,7 @@ export type CreateChannelRequest = {
     keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark' | 'key_proxy'>>;
     model: string;
     custom_model?: string;
+    excluded_model?: string;
     proxy?: boolean;
     auto_sync?: boolean;
     auto_group?: AutoGroupType;
@@ -113,6 +115,7 @@ export type UpdateChannelRequest = {
     base_urls?: BaseUrl[];
     model?: string;
     custom_model?: string;
+    excluded_model?: string;
     proxy?: boolean;
     auto_sync?: boolean;
     auto_group?: AutoGroupType;

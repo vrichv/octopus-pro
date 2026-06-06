@@ -15,6 +15,49 @@ import (
 
 var lastSyncModelsTime = time.Now()
 
+func dedupeModels(models []string) []string {
+	seen := make(map[string]struct{}, len(models))
+	nextModels := make([]string, 0, len(models))
+	for _, modelName := range models {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		if _, ok := seen[modelName]; ok {
+			continue
+		}
+		seen[modelName] = struct{}{}
+		nextModels = append(nextModels, modelName)
+	}
+	return nextModels
+}
+
+func syncChannelModels(fetchedModels []string, excludedModels []string) (selectedModels []string, nextExcludedModels []string) {
+	fetchedSet := make(map[string]struct{}, len(fetchedModels))
+	for _, modelName := range fetchedModels {
+		fetchedSet[modelName] = struct{}{}
+	}
+
+	nextExcludedSet := make(map[string]struct{}, len(excludedModels))
+	nextExcludedModels = make([]string, 0, len(excludedModels))
+	for _, modelName := range excludedModels {
+		if _, ok := fetchedSet[modelName]; !ok {
+			continue
+		}
+		nextExcludedSet[modelName] = struct{}{}
+		nextExcludedModels = append(nextExcludedModels, modelName)
+	}
+
+	selectedModels = make([]string, 0, len(fetchedModels))
+	for _, modelName := range fetchedModels {
+		if _, ok := nextExcludedSet[modelName]; ok {
+			continue
+		}
+		selectedModels = append(selectedModels, modelName)
+	}
+	return selectedModels, nextExcludedModels
+}
+
 // SyncModelsTask 同步模型任务
 func SyncModelsTask() {
 	log.Debugf("sync models task started")
@@ -40,9 +83,9 @@ func SyncModelsTask() {
 			log.Warnf("failed to fetch models for channel %s: %v", channel.Name, err)
 			continue
 		}
-		oldModels := xstrings.SplitTrimCompact(",", channel.Model)
-		newModels := xstrings.TrimCompact(fetchModels)
-		for _, m := range newModels {
+		oldModels := dedupeModels(xstrings.SplitTrimCompact(",", channel.Model))
+		fetchedModels := dedupeModels(fetchModels)
+		for _, m := range fetchedModels {
 			m = strings.TrimSpace(m)
 			if m == "" {
 				continue
@@ -54,16 +97,21 @@ func SyncModelsTask() {
 			seenTotalNewModels[m] = struct{}{}
 			totalNewModels = append(totalNewModels, m)
 		}
-		deletedModels, addedModels := diff.Diff(oldModels, newModels)
-		if len(deletedModels) > 0 || len(addedModels) > 0 {
-			fetchModelStr := strings.Join(newModels, ",")
+		nextModels, nextExcludedModels := syncChannelModels(fetchedModels, dedupeModels(xstrings.SplitTrimCompact(",", channel.ExcludedModel)))
+		deletedModels, addedModels := diff.Diff(oldModels, nextModels)
+		nextModelStr := strings.Join(nextModels, ",")
+		nextExcludedModelStr := strings.Join(nextExcludedModels, ",")
+		if len(deletedModels) > 0 || len(addedModels) > 0 || nextExcludedModelStr != channel.ExcludedModel {
 			if _, err := op.ChannelUpdate(&model.ChannelUpdateRequest{
-				ID:    channel.ID,
-				Model: &fetchModelStr,
+				ID:            channel.ID,
+				Model:         &nextModelStr,
+				ExcludedModel: &nextExcludedModelStr,
 			}, ctx); err != nil {
 				log.Errorf("failed to update channel %s: %v", channel.Name, err)
 				continue
 			}
+			channel.Model = nextModelStr
+			channel.ExcludedModel = nextExcludedModelStr
 		}
 		// 批量删除消失的模型对应的 GroupItem
 		if len(deletedModels) > 0 {
@@ -78,7 +126,7 @@ func SyncModelsTask() {
 		}
 
 		// 自动分组
-		if len(newModels) > 0 {
+		if len(nextModels) > 0 {
 			helper.ChannelAutoGroup(&channel, ctx)
 		}
 	}

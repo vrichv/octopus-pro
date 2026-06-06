@@ -9,10 +9,9 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/common/Toast';
 import { useTranslations } from 'next-intl';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, X, Plus } from 'lucide-react';
 
 export interface ChannelKeyFormItem {
@@ -36,6 +35,7 @@ export interface ChannelFormData {
     keys: ChannelKeyFormItem[];
     model: string;
     custom_model: string;
+    excluded_model: string;
     enabled: boolean;
     proxy: boolean;
     auto_sync: boolean;
@@ -64,6 +64,24 @@ import {
     AccordionItem,
     AccordionTrigger,
 } from "@/components/ui/accordion";
+
+const splitModels = (models: string) => models
+    ? models.split(',').map((model) => model.trim()).filter(Boolean)
+    : [];
+
+const dedupeModels = (models: string[]) => {
+    const seen = new Set<string>();
+    const nextModels: string[] = [];
+
+    for (const model of models) {
+        const trimmedModel = model.trim();
+        if (!trimmedModel || seen.has(trimmedModel)) continue;
+        seen.add(trimmedModel);
+        nextModels.push(trimmedModel);
+    }
+
+    return nextModels;
+};
 
 export function ChannelForm({
     formData,
@@ -94,25 +112,167 @@ export function ChannelForm({
         }
     }, [formData, onFormDataChange]);
 
-    const autoModels = formData.model
-        ? formData.model.split(',').map((m) => m.trim()).filter(Boolean)
-        : [];
-    const customModels = formData.custom_model
-        ? formData.custom_model.split(',').map((m) => m.trim()).filter(Boolean)
-        : [];
+    const autoModels = useMemo(() => dedupeModels(splitModels(formData.model)), [formData.model]);
+    const customModels = useMemo(() => dedupeModels(splitModels(formData.custom_model)), [formData.custom_model]);
+    const excludedModels = useMemo(() => dedupeModels(splitModels(formData.excluded_model)), [formData.excluded_model]);
+    const selectedModels = useMemo(() => dedupeModels([...autoModels, ...customModels]), [autoModels, customModels]);
+    const selectedModelSet = useMemo(() => new Set(selectedModels), [selectedModels]);
+    const selectedAutoModelRef = useRef<string[]>(autoModels);
+    const selectedCustomModelRef = useRef<string[]>(customModels);
+    const disabledAutoModelRef = useRef<string[]>(excludedModels);
+    const availableModelsRef = useRef<string[]>(dedupeModels([...autoModels, ...excludedModels]));
     const [inputValue, setInputValue] = useState('');
+    const [modelSearch, setModelSearch] = useState('');
+    const [availableModels, setAvailableModels] = useState<string[]>(() => dedupeModels([...autoModels, ...excludedModels]));
+    const [availableCustomModels, setAvailableCustomModels] = useState<string[]>(() => customModels);
     const inputRef = useRef<HTMLInputElement>(null);
 
     const fetchModel = useFetchModel();
+    const hasAutoFetchedRef = useRef(false);
 
     const effectiveKey =
         formData.keys.find((k) => k.enabled && k.channel_key.trim())?.channel_key.trim() || '';
 
-    const updateModels = (nextAuto: string[], nextCustom: string[]) => {
-        const model = nextAuto.join(',');
-        const custom_model = nextCustom.join(',');
-        if (formData.model === model && formData.custom_model === custom_model) return;
-        onFormDataChange({ ...formData, model, custom_model });
+    const updateModels = (nextAuto: string[], nextCustom: string[], nextExcluded: string[]) => {
+        const model = dedupeModels(nextAuto).join(',');
+        const custom_model = dedupeModels(nextCustom).join(',');
+        const nextExcludedModels = dedupeModels(nextExcluded);
+        const excluded_model = nextExcludedModels.join(',');
+        selectedAutoModelRef.current = dedupeModels(nextAuto);
+        selectedCustomModelRef.current = dedupeModels(nextCustom);
+        disabledAutoModelRef.current = nextExcludedModels;
+        if (formData.model === model && formData.custom_model === custom_model && formData.excluded_model === excluded_model) return;
+        onFormDataChange({ ...formData, model, custom_model, excluded_model });
+    };
+
+    // Auto-fetch full model list on initial load when editing an existing channel.
+    // This ensures excluded models are visible as gray before any manual refresh.
+    useEffect(() => {
+        if (hasAutoFetchedRef.current) return;
+        if (!formData.base_urls?.[0]?.url || !effectiveKey) return;
+        if (!formData.model && !formData.excluded_model) return;
+        hasAutoFetchedRef.current = true;
+        fetchModel.mutate(
+            {
+                type: formData.type,
+                base_urls: formData.base_urls,
+                keys: formData.keys
+                    .filter((k) => k.channel_key.trim())
+                    .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key.trim() })),
+                proxy: formData.proxy,
+                channel_proxy: formData.channel_proxy?.trim() || null,
+                match_regex: formData.match_regex.trim() || null,
+                custom_header: formData.custom_header?.filter((h) => h.header_key.trim()) || [],
+            },
+            {
+                onSuccess: (data) => {
+                    const fetchedModels = dedupeModels(data ?? []);
+                    if (fetchedModels.length === 0) return;
+                    const fetchedModelSet = new Set(fetchedModels);
+                    const currentAutoModelSet = new Set(selectedAutoModelRef.current);
+                    const currentCustomModelSet = new Set(selectedCustomModelRef.current);
+                    // Models not in autoModels or customModels are excluded (gray)
+                    const nextExcludedModels = dedupeModels([
+                        ...disabledAutoModelRef.current,
+                        ...fetchedModels.filter((model) =>
+                            !currentAutoModelSet.has(model) && !currentCustomModelSet.has(model)
+                        ),
+                    ]).filter((model) => fetchedModelSet.has(model));
+                    const nextExcludedModelSet = new Set(nextExcludedModels);
+                    const nextAutoModels = fetchedModels.filter((model) => !nextExcludedModelSet.has(model));
+                    availableModelsRef.current = fetchedModels;
+                    setAvailableModels(fetchedModels);
+                    updateModels(nextAutoModels, selectedCustomModelRef.current, nextExcludedModels);
+                },
+            }
+        );
+    }, [formData.base_urls, effectiveKey, formData.model, formData.excluded_model]);
+
+    // Keep refs in sync with formData changes so handleRefreshModels always has up-to-date data
+    useEffect(() => {
+        selectedAutoModelRef.current = autoModels;
+        selectedCustomModelRef.current = customModels;
+        disabledAutoModelRef.current = excludedModels;
+        availableModelsRef.current = dedupeModels([...autoModels, ...excludedModels]);
+    }, [autoModels, customModels, excludedModels]);
+
+
+    const allAvailableModels = useMemo(() => (
+        dedupeModels([...availableModels, ...availableCustomModels, ...autoModels, ...customModels, ...excludedModels])
+    ), [autoModels, availableCustomModels, availableModels, customModels, excludedModels]);
+
+    const visibleModels = useMemo(() => {
+        const searchTerm = modelSearch.trim().toLowerCase();
+        if (!searchTerm) return allAvailableModels;
+        return allAvailableModels.filter((model) => model.toLowerCase().includes(searchTerm));
+    }, [allAvailableModels, modelSearch]);
+
+    const displayModels = useMemo(() => (
+        [...visibleModels].sort((left, right) => Number(selectedModelSet.has(right)) - Number(selectedModelSet.has(left)))
+    ), [selectedModelSet, visibleModels]);
+
+    const selectedVisibleModelCount = visibleModels.filter((model) => selectedModelSet.has(model)).length;
+    const allVisibleModelsSelected = visibleModels.length > 0 && selectedVisibleModelCount === visibleModels.length;
+
+    const selectModels = (models: string[]) => {
+        const nextModels = dedupeModels(models);
+        if (nextModels.length === 0) return;
+
+        const availableCustomModelSet = new Set(availableCustomModels);
+        const currentAutoModels = selectedAutoModelRef.current;
+        const currentCustomModels = selectedCustomModelRef.current;
+        const nextAutoModels = [...currentAutoModels];
+        const nextCustomModels = [...currentCustomModels];
+        const selectedModelNames = new Set([...currentAutoModels, ...currentCustomModels]);
+
+        for (const model of nextModels) {
+            if (selectedModelNames.has(model)) continue;
+            if (availableCustomModelSet.has(model)) {
+                nextCustomModels.push(model);
+            } else {
+                nextAutoModels.push(model);
+            }
+            selectedModelNames.add(model);
+        }
+
+        const selectedAutoModels = nextModels.filter((model) => !availableCustomModelSet.has(model));
+        setAvailableModels((currentModels) => {
+            const next = dedupeModels([...currentModels, ...selectedAutoModels]);
+            availableModelsRef.current = next;
+            return next;
+        });
+        setAvailableCustomModels((currentModels) => currentModels.filter((model) => !nextModels.includes(model)));
+        updateModels(nextAutoModels, nextCustomModels, disabledAutoModelRef.current.filter((model) => !nextModels.includes(model)));
+    };
+
+    const deselectModels = (models: string[]) => {
+        const modelsToDeselect = new Set(models);
+        if (modelsToDeselect.size === 0) return;
+
+        const currentAutoModels = selectedAutoModelRef.current;
+        const currentCustomModels = selectedCustomModelRef.current;
+        const deselectedAutoModels = currentAutoModels.filter((model) => modelsToDeselect.has(model));
+        const deselectedCustomModels = currentCustomModels.filter((model) => modelsToDeselect.has(model));
+
+        setAvailableModels((currentModels) => {
+            const next = dedupeModels([...currentModels, ...deselectedAutoModels]);
+            availableModelsRef.current = next;
+            return next;
+        });
+        setAvailableCustomModels((currentModels) => dedupeModels([...currentModels, ...deselectedCustomModels]));
+        updateModels(
+            currentAutoModels.filter((model) => !modelsToDeselect.has(model)),
+            currentCustomModels.filter((model) => !modelsToDeselect.has(model)),
+            dedupeModels([...disabledAutoModelRef.current, ...deselectedAutoModels])
+        );
+    };
+
+    const toggleModel = (model: string) => {
+        if (selectedModelSet.has(model)) {
+            deselectModels([model]);
+        } else {
+            selectModels([model]);
+        }
     };
 
     const handleRefreshModels = async () => {
@@ -131,13 +291,32 @@ export function ChannelForm({
             },
             {
                 onSuccess: (data) => {
-                    if (data && data.length > 0) {
-                        const nextAuto = Array.from(new Set([...autoModels, ...data].map((m) => m.trim()).filter(Boolean)));
-                        updateModels(nextAuto, customModels);
-                        toast.success(t('modelRefreshSuccess'));
-                    } else {
+                    const fetchedModels = dedupeModels(data ?? []);
+                    if (fetchedModels.length === 0) {
                         toast.warning(t('modelRefreshEmpty'));
+                        return;
                     }
+                    const fetchedModelSet = new Set(fetchedModels);
+                    const currentAutoModels = selectedAutoModelRef.current;
+                    const currentCustomModels = selectedCustomModelRef.current;
+                    const currentExcludedModels = disabledAutoModelRef.current;
+                    const currentAutoModelSet = new Set(currentAutoModels);
+                    const currentCustomModelSet = new Set(currentCustomModels);
+                    const currentExcludedModelSet = new Set(currentExcludedModels);
+                    // New models from remote (not in selected, not in excluded) → add to excluded
+                    const newRemoteModels = fetchedModels.filter((model) =>
+                        !currentAutoModelSet.has(model) &&
+                        !currentCustomModelSet.has(model) &&
+                        !currentExcludedModelSet.has(model)
+                    );
+                    const nextExcludedModels = dedupeModels([...currentExcludedModels, ...newRemoteModels])
+                        .filter((model) => fetchedModelSet.has(model));
+                    const nextExcludedModelSet = new Set(nextExcludedModels);
+                    const nextAutoModels = fetchedModels.filter((model) => !nextExcludedModelSet.has(model));
+                    availableModelsRef.current = fetchedModels;
+                    setAvailableModels(fetchedModels);
+                    updateModels(nextAutoModels, currentCustomModels, nextExcludedModels);
+                    toast.success(t('modelRefreshSuccess'));
                 },
                 onError: (error) => {
                     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -146,27 +325,27 @@ export function ChannelForm({
             }
         );
     };
-
     const handleAddModel = (model: string) => {
         const trimmedModel = model.trim();
-        if (trimmedModel && !customModels.includes(trimmedModel) && !autoModels.includes(trimmedModel)) {
-            updateModels(autoModels, [...customModels, trimmedModel]);
+        if (trimmedModel) {
+            setAvailableCustomModels((currentModels) => dedupeModels([...currentModels, trimmedModel]));
+            if (!selectedModelSet.has(trimmedModel)) {
+                updateModels(selectedAutoModelRef.current, [...selectedCustomModelRef.current, trimmedModel], disabledAutoModelRef.current.filter((model) => model !== trimmedModel));
+            }
         }
         setInputValue('');
-    };
-
-    const handleRemoveAutoModel = (model: string) => {
-        updateModels(autoModels.filter(m => m !== model), customModels);
-    };
-
-    const handleRemoveCustomModel = (model: string) => {
-        updateModels(autoModels, customModels.filter(m => m !== model));
     };
 
     const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === 'Enter') {
             e.preventDefault();
             if (inputValue.trim()) handleAddModel(inputValue);
+        }
+    };
+
+    const handleModelSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
         }
     };
 
@@ -398,7 +577,7 @@ export function ChannelForm({
                         placeholder={t('modelCustomPlaceholder')}
                         className="pr-10 rounded-xl"
                     />
-                    {inputValue.trim() && !customModels.includes(inputValue.trim()) && !autoModels.includes(inputValue.trim()) && (
+                    {inputValue.trim() && !selectedModelSet.has(inputValue.trim()) && (
                         <Button
                             type="button"
                             variant="ghost"
@@ -413,55 +592,66 @@ export function ChannelForm({
                 </div>
 
                 <div className="space-y-2">
-                    <div className="flex items-center justify-between">
+                    <Input
+                        id={`${idPrefix}-model-search`}
+                        type="search"
+                        value={modelSearch}
+                        onChange={(e) => setModelSearch(e.target.value)}
+                        onKeyDown={handleModelSearchKeyDown}
+                        placeholder={t('modelSearchPlaceholder')}
+                        className="rounded-xl"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                         <label className="text-xs font-medium text-card-foreground">
-                            {t('modelSelected')} {(autoModels.length + customModels.length) > 0 && `(${autoModels.length + customModels.length})`}
+                            {t('modelSelected')} {selectedModels.length > 0 && `(${selectedModels.length})`}
                         </label>
-                        {(autoModels.length + customModels.length) > 0 && (
+                        <div className="flex items-center gap-1">
                             <Button
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => {
-                                    updateModels([], []);
-                                }}
-                                className="h-6 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground hover:bg-transparent"
+                                onClick={() => selectModels(visibleModels)}
+                                disabled={visibleModels.length === 0 || allVisibleModelsSelected}
+                                className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent disabled:opacity-40"
                             >
-                                {t('modelClearAll')}
+                                {t('modelSelectAll')}
                             </Button>
-                        )}
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => deselectModels(visibleModels)}
+                                disabled={selectedVisibleModelCount === 0}
+                                className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent disabled:opacity-40"
+                            >
+                                {t('modelDeselectAll')}
+                            </Button>
+                        </div>
                     </div>
                     <div className="rounded-xl border border-border bg-muted/30 p-2.5 max-h-40 min-h-12 overflow-y-auto">
-                        {(autoModels.length + customModels.length) > 0 ? (
+                        {displayModels.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5">
-                                {autoModels.map((model) => (
-                                    <Badge key={model} variant="secondary" className="bg-muted hover:bg-muted/80">
-                                        {model}
+                                {displayModels.map((model) => {
+                                    const isSelected = selectedModelSet.has(model);
+
+                                    return (
                                         <button
+                                            key={model}
                                             type="button"
-                                            onClick={() => handleRemoveAutoModel(model)}
-                                            className="ml-1 rounded-sm opacity-70 hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring"
+                                            onClick={() => toggleModel(model)}
+                                            className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${isSelected
+                                                ? 'border-transparent bg-green-600 text-white hover:bg-green-700'
+                                                : 'border-border bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+                                                }`}
                                         >
-                                            <X className="h-3 w-3" />
+                                            {model}
                                         </button>
-                                    </Badge>
-                                ))}
-                                {customModels.map((model) => (
-                                    <Badge key={model} className="bg-primary hover:bg-primary/90">
-                                        {model}
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveCustomModel(model)}
-                                            className="ml-1 rounded-sm opacity-70 hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring"
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    </Badge>
-                                ))}
+                                    );
+                                })}
                             </div>
                         ) : (
                             <div className="flex items-center justify-center h-8 text-xs text-muted-foreground">
-                                {t('modelNoSelected')}
+                                {modelSearch.trim() ? t('modelNoMatches') : t('modelNoSelected')}
                             </div>
                         )}
                     </div>

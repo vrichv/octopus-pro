@@ -23,25 +23,26 @@ var keyRRIndex sync.Map // channelID (int) → *atomic.Int64
 const ChannelTypeDoubao llm.APIFormat = "doubao"
 
 type Channel struct {
-	ID              int            `json:"id" gorm:"primaryKey"`
-	Name            string         `json:"name" gorm:"unique;not null"`
-	Type            llm.APIFormat  `json:"type"`
-	Enabled         bool           `json:"enabled" gorm:"default:true"`
-	BaseUrls        []BaseUrl      `json:"base_urls" gorm:"serializer:json"`
-	Keys            []ChannelKey   `json:"keys" gorm:"foreignKey:ChannelID"`
-	Model           string         `json:"model"`
-	CustomModel     string         `json:"custom_model"`
-	Proxy           bool           `json:"proxy" gorm:"default:false"`
-	AutoSync        bool           `json:"auto_sync" gorm:"default:false"`
-	AutoGroup       AutoGroupType  `json:"auto_group" gorm:"default:0"`
-	CustomHeader    []CustomHeader `json:"custom_header" gorm:"serializer:json"`
-	ParamOverride   *string        `json:"param_override"`
-	ChannelProxy    *string        `json:"channel_proxy"`
-	Stats           *StatsChannel  `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
-	MatchRegex      *string        `json:"match_regex"`
-	RateLimit       string         `json:"rate_limit" gorm:"default:''"`              // key 级默认限流，如 "100/1h"
-	ModelRateLimit  string         `json:"model_rate_limit" gorm:"default:''"`        // model 级限流，如 "gpt-4:2/1m,claude-3:10/1h"
-	KeyMode         int            `json:"key_mode" gorm:"default:0"`                 // 0=Cost, 1=RoundRobin
+	ID             int            `json:"id" gorm:"primaryKey"`
+	Name           string         `json:"name" gorm:"unique;not null"`
+	Type           llm.APIFormat  `json:"type"`
+	Enabled        bool           `json:"enabled" gorm:"default:true"`
+	BaseUrls       []BaseUrl      `json:"base_urls" gorm:"serializer:json"`
+	Keys           []ChannelKey   `json:"keys" gorm:"foreignKey:ChannelID"`
+	Model          string         `json:"model"`
+	CustomModel    string         `json:"custom_model"`
+	ExcludedModel  string         `json:"excluded_model" gorm:"default:''"`
+	Proxy          bool           `json:"proxy" gorm:"default:false"`
+	AutoSync       bool           `json:"auto_sync" gorm:"default:false"`
+	AutoGroup      AutoGroupType  `json:"auto_group" gorm:"default:0"`
+	CustomHeader   []CustomHeader `json:"custom_header" gorm:"serializer:json"`
+	ParamOverride  *string        `json:"param_override"`
+	ChannelProxy   *string        `json:"channel_proxy"`
+	Stats          *StatsChannel  `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
+	MatchRegex     *string        `json:"match_regex"`
+	RateLimit      string         `json:"rate_limit" gorm:"default:''"`       // key 级默认限流，如 "100/1h"
+	ModelRateLimit string         `json:"model_rate_limit" gorm:"default:''"` // model 级限流，如 "gpt-4:2/1m,claude-3:10/1h"
+	KeyMode        int            `json:"key_mode" gorm:"default:0"`          // 0=Cost, 1=RoundRobin
 }
 
 type BaseUrl struct {
@@ -54,18 +55,18 @@ type CustomHeader struct {
 	HeaderValue string `json:"header_value"`
 }
 type ChannelKey struct {
-	ID                   int     `json:"id" gorm:"primaryKey"`
-	ChannelID            int     `json:"channel_id"`
-	Enabled              bool    `json:"enabled" gorm:"default:true"`
-	ChannelKey           string  `json:"channel_key"`
-	StatusCode           int     `json:"status_code"`
-	LastUseTimeStamp     int64   `json:"last_use_time_stamp"`
-	TotalCost            float64 `json:"total_cost"`
-	Remark               string  `json:"remark"`
-	KeyProxy             string  `json:"key_proxy" gorm:"default:''"`
-	ConsecutiveAuthErrors int    `json:"consecutive_auth_errors" gorm:"default:0"`
-	LastAuthErrorTime    int64   `json:"last_auth_error_time" gorm:"default:0"` // 上次认证错误时间，用于 5min 窗口重置
-	RetryAfter           int64   `json:"retry_after" gorm:"-"` // 动态冷却时间（秒），不持久化
+	ID                    int     `json:"id" gorm:"primaryKey"`
+	ChannelID             int     `json:"channel_id"`
+	Enabled               bool    `json:"enabled" gorm:"default:true"`
+	ChannelKey            string  `json:"channel_key"`
+	StatusCode            int     `json:"status_code"`
+	LastUseTimeStamp      int64   `json:"last_use_time_stamp"`
+	TotalCost             float64 `json:"total_cost"`
+	Remark                string  `json:"remark"`
+	KeyProxy              string  `json:"key_proxy" gorm:"default:''"`
+	ConsecutiveAuthErrors int     `json:"consecutive_auth_errors" gorm:"default:0"`
+	LastAuthErrorTime     int64   `json:"last_auth_error_time" gorm:"default:0"` // 上次认证错误时间，用于 5min 窗口重置
+	RetryAfter            int64   `json:"retry_after" gorm:"-"`                  // 动态冷却时间（秒），不持久化
 }
 
 // ChannelUpdateRequest 渠道更新请求 - 仅包含变更的数据
@@ -77,6 +78,7 @@ type ChannelUpdateRequest struct {
 	BaseUrls       *[]BaseUrl      `json:"base_urls,omitempty"`
 	Model          *string         `json:"model,omitempty"`
 	CustomModel    *string         `json:"custom_model,omitempty"`
+	ExcludedModel  *string         `json:"excluded_model,omitempty"`
 	Proxy          *bool           `json:"proxy,omitempty"`
 	AutoSync       *bool           `json:"auto_sync,omitempty"`
 	AutoGroup      *AutoGroupType  `json:"auto_group,omitempty"`
@@ -178,7 +180,7 @@ func (c *Channel) GetChannelKey() ChannelKey {
 	if c.KeyMode == 1 {
 		val, _ := keyRRIndex.LoadOrStore(c.ID, new(atomic.Int64))
 		idxPtr := val.(*atomic.Int64)
-		idx := int(idxPtr.Add(1) - 1) % len(available)
+		idx := int(idxPtr.Add(1)-1) % len(available)
 		return available[idx]
 	}
 

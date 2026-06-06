@@ -3,8 +3,8 @@ package migrate
 import (
 	"fmt"
 
-	"github.com/vrichv/octopus-pro/internal/model"
 	"github.com/looplj/axonhub/llm"
+	"github.com/vrichv/octopus-pro/internal/model"
 	"gorm.io/gorm"
 )
 
