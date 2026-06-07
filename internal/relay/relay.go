@@ -97,43 +97,80 @@ func (r *relayRun) run() {
 	ctx := r.c.Request.Context()
 	var lastErr error
 
-	for r.iter.Next() {
-		select {
-		case <-ctx.Done():
-			log.Debugf("request context canceled, stopping retry")
-			r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
-			return
-		default:
+	// round 0 = first pass, round 1 = retry after rate-limit wait
+	for round := 0; round <= 1; round++ {
+		if round > 0 {
+			r.iter.Reset()
+			lastErr = nil
 		}
 
-		// 对同一个渠道的多个 key 进行重试（429 时自动切换到下一个 key）
-		// 前一个 key 已被标记冷却，GetChannelKey 会跳过它并返回其他可用 key
-		for keyRetry := 0; keyRetry < 10; keyRetry++ {
-			attempt, err := r.prepareAttempt()
-			if err != nil {
+		allRateLimited := true
+		var minWait time.Duration
+
+		for r.iter.Next() {
+			select {
+			case <-ctx.Done():
+				log.Debugf("request context canceled, stopping retry")
+				r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
+				return
+			default:
+			}
+
+			// 对同一个渠道的多个 key 进行重试（429 时自动切换到下一个 key）
+			// 前一个 key 已被标记冷却，GetChannelKey 会跳过它并返回其他可用 key
+			for keyRetry := 0; keyRetry < 10; keyRetry++ {
+				attempt, err := r.prepareAttempt()
+				if err != nil {
+					lastErr = err
+					break
+				}
+				if attempt == nil {
+					break
+				}
+
+				written, err := attempt.run()
+				if err == nil {
+					r.metrics.Save(ctx, true, nil, r.iter.Attempts())
+					return
+				}
+				if written {
+					r.metrics.Save(ctx, false, err, r.iter.Attempts())
+					return
+				}
 				lastErr = err
-				break
-			}
-			if attempt == nil {
-				break
-			}
 
-			written, err := attempt.run()
-			if err == nil {
-				r.metrics.Save(ctx, true, nil, r.iter.Attempts())
-				return
+				if attempt.rateLimited {
+					// 本地限流：记录等待时间，跳出 key 循环
+					if minWait == 0 || attempt.rateLimitWait < minWait {
+						minWait = attempt.rateLimitWait
+					}
+					break
+				}
+				// 非限流错误 → 标记有真实故障
+				allRateLimited = false
+				// 429 → 尝试渠道的下一个 key
+				if attempt.statusCode != http.StatusTooManyRequests {
+					break
+				}
 			}
-			if written {
-				r.metrics.Save(ctx, false, err, r.iter.Attempts())
-				return
-			}
-			lastErr = err
-
-			// 429 → 尝试渠道的下一个 key
-			if attempt.statusCode != http.StatusTooManyRequests {
-				break
+			if !allRateLimited {
+				break // 有真实故障，无需等待
 			}
 		}
+
+		// 首次遍历：全部限流 + 等待时间合理 → 等待后重试
+		if round == 0 && allRateLimited && minWait > 0 && minWait <= 2*time.Minute {
+			log.Infof("all channels rate-limited, waiting %v for next slot", minWait)
+			select {
+			case <-time.After(minWait):
+				log.Infof("rate-limit wait completed, retrying all channels")
+				continue
+			case <-ctx.Done():
+				r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
+				return
+			}
+		}
+		break // 非限流故障或等待超时，退出循环
 	}
 
 	if lastErr == nil {
@@ -220,6 +257,17 @@ func (ra *relayAttempt) run() (bool, error) {
 		balancer.RecordSuccess(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 		balancer.SetSticky(ra.metrics.APIKeyID, ra.metrics.RequestModel, ra.channel.ID, ra.usedKey.ID)
 		return false, nil
+	}
+
+	// 本地限流：不触发熔断器、不计入失败统计
+	if fwdErr != nil && errors.Is(fwdErr, plugins.ErrRateLimited) {
+		ra.rateLimited = true
+		var rlErr *plugins.RateLimitedError
+		if errors.As(fwdErr, &rlErr) {
+			ra.rateLimitWait = rlErr.Wait
+		}
+		span.End(dbmodel.AttemptFailed, fwdErr.Error())
+		return false, fwdErr // written=false, 不进入 statusCode switch
 	}
 
 	// error path: handle by status code

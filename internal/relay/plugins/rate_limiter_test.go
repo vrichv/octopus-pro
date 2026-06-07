@@ -211,3 +211,87 @@ func TestModelRateLimitMiddleware(t *testing.T) {
 		t.Errorf("different model should not be limited: %v", err)
 	}
 }
+
+func TestRateLimiterWaitDuration(t *testing.T) {
+	rl := newRateLimiter(2, 100*time.Millisecond)
+	rl.Allow()
+	rl.Allow()
+
+	// Window full, WaitDuration should return positive
+	d := rl.WaitDuration()
+	if d <= 0 {
+		t.Errorf("expected positive wait duration when window full, got %v", d)
+	}
+	if d > 100*time.Millisecond {
+		t.Errorf("wait duration %v exceeds interval 100ms", d)
+	}
+
+	// After window expires, WaitDuration should return 0
+	time.Sleep(150 * time.Millisecond)
+	d = rl.WaitDuration()
+	if d != 0 {
+		t.Errorf("expected zero wait duration after window expired, got %v", d)
+	}
+}
+
+func TestRateLimiterTryAllow(t *testing.T) {
+	rl := newRateLimiter(1, 500*time.Millisecond)
+
+	// First request should be allowed (returns nil)
+	if err := rl.TryAllow(); err != nil {
+		t.Errorf("first TryAllow should return nil, got %v", err)
+	}
+
+	// Second request should be blocked (returns RateLimitedError)
+	err := rl.TryAllow()
+	if err == nil {
+		t.Fatal("second TryAllow should return error")
+	}
+
+	// Should be a RateLimitedError with positive wait
+	if err.Wait <= 0 {
+		t.Errorf("expected positive wait, got %v", err.Wait)
+	}
+	if err.Wait > 500*time.Millisecond {
+		t.Errorf("wait %v exceeds interval 500ms", err.Wait)
+	}
+
+	// errors.Is should match ErrRateLimited
+	if !errors.Is(err, ErrRateLimited) {
+		t.Error("RateLimitedError should match ErrRateLimited via errors.Is")
+	}
+
+	// errors.As should extract *RateLimitedError
+	var rlErr *RateLimitedError
+	if !errors.As(err, &rlErr) {
+		t.Error("errors.As should extract *RateLimitedError")
+	}
+	if rlErr.Wait != err.Wait {
+		t.Errorf("extracted wait %v != original %v", rlErr.Wait, err.Wait)
+	}
+}
+
+func TestRateLimitedErrorIs(t *testing.T) {
+	err := &RateLimitedError{
+		Key:      "test",
+		Limit:    5,
+		Interval: time.Minute,
+		Wait:     30 * time.Second,
+	}
+
+	// errors.Is should match ErrRateLimited
+	if !errors.Is(err, ErrRateLimited) {
+		t.Error("RateLimitedError.Is should return true for ErrRateLimited")
+	}
+
+	// Should not match other errors
+	if errors.Is(err, errors.New("something else")) {
+		t.Error("RateLimitedError.Is should not match unrelated errors")
+	}
+
+	// Error() should contain useful info
+	msg := err.Error()
+	if msg == "" {
+		t.Error("Error() should not be empty")
+	}
+}

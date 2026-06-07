@@ -23,10 +23,11 @@ type relayRun struct {
 // relayAttempt 保存一次上游通道尝试的状态。
 type relayAttempt struct {
 	*relayRun
-
-	outAdapter transformer.Outbound
-	channel    *dbmodel.Channel
-	usedKey    dbmodel.ChannelKey
-	statusCode int           // 上游 HTTP 状态码
-	retryAfter time.Duration // 429 响应中 Retry-After 指定的冷却时长
+	outAdapter    transformer.Outbound
+	channel       *dbmodel.Channel
+	usedKey       dbmodel.ChannelKey
+	statusCode    int           // 上游 HTTP 状态码
+	retryAfter    time.Duration // 429 响应中 Retry-After 指定的冷却时长
+	rateLimited   bool          // 本次尝试因本地限流失败
+	rateLimitWait time.Duration // 限流等待时间
 }

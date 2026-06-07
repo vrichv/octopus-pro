@@ -132,30 +132,56 @@ func (rl *rateLimiter) reconfigure(count int, interval time.Duration) {
 	}
 }
 
+// cleanWindow 移除窗口外的过期条目。必须在持有 mu 时调用。
+func (rl *rateLimiter) cleanWindow() {
+	if len(rl.window) == 0 {
+		return
+	}
+	cutoff := time.Now().Add(-rl.interval)
+	i := 0
+	for i < len(rl.window) && rl.window[i].Before(cutoff) {
+		i++
+	}
+	rl.window = rl.window[i:]
+}
+
 // Allow 检查是否允许本次请求通过。若未超过限制返回 true，否则返回 false。
 func (rl *rateLimiter) Allow() bool {
 	rl.lastAccess.Store(time.Now().UnixNano())
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-
-	now := time.Now()
-	cutoff := now.Add(-rl.interval)
-
-	// 移除窗口外的记录
-	if len(rl.window) > 0 {
-		i := 0
-		for i < len(rl.window) && rl.window[i].Before(cutoff) {
-			i++
-		}
-		rl.window = rl.window[i:]
-	}
-
+	rl.cleanWindow()
 	if len(rl.window) >= rl.count {
 		return false
 	}
-
-	rl.window = append(rl.window, now)
+	rl.window = append(rl.window, time.Now())
 	return true
+}
+
+// WaitDuration 计算到下一个可用槽位的等待时间。内部清理过期条目。
+func (rl *rateLimiter) WaitDuration() time.Duration {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.cleanWindow()
+	if len(rl.window) < rl.count {
+		return 0
+	}
+	return rl.window[0].Add(rl.interval).Sub(time.Now())
+}
+
+// TryAllow 原子检查限流：允许通过返回 nil，否则返回 RateLimitedError 含等待时间。
+// 合并 Allow + WaitDuration 在一次锁获取中，避免并发下等待时间陈旧。
+func (rl *rateLimiter) TryAllow() *RateLimitedError {
+	rl.lastAccess.Store(time.Now().UnixNano())
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.cleanWindow()
+	if len(rl.window) < rl.count {
+		rl.window = append(rl.window, time.Now())
+		return nil
+	}
+	wait := rl.window[0].Add(rl.interval).Sub(time.Now())
+	return &RateLimitedError{Wait: wait}
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +232,23 @@ func getOrCreateLimiter(key string, count int, interval time.Duration) *rateLimi
 // ---------------------------------------------------------------------------
 
 var ErrRateLimited = errors.New("rate limited")
+
+// RateLimitedError 区分限流和真实错误，携带等待时间。
+type RateLimitedError struct {
+	Key      string
+	Limit    int
+	Interval time.Duration
+	Wait     time.Duration
+}
+
+func (e *RateLimitedError) Error() string {
+	return fmt.Sprintf("rate limited: %s limit exceeded (%d/%s), wait %v",
+		e.Key, e.Limit, e.Interval, e.Wait)
+}
+
+func (e *RateLimitedError) Is(target error) bool {
+	return target == ErrRateLimited
+}
 
 // ---------------------------------------------------------------------------
 // RateLimiter Middleware
@@ -282,8 +325,11 @@ func (m *rateLimiterMiddleware) OnOutboundRawRequest(ctx context.Context, reques
 		return request, nil
 	}
 	rl := getOrCreateLimiter(m.limitKey, m.limitCount, m.limitInterval)
-	if !rl.Allow() {
-		return nil, fmt.Errorf("%w: %s limit exceeded (%d/%s)", ErrRateLimited, m.limitKey, m.limitCount, m.limitInterval)
+	if rlErr := rl.TryAllow(); rlErr != nil {
+		rlErr.Key = m.limitKey
+		rlErr.Limit = m.limitCount
+		rlErr.Interval = m.limitInterval
+		return nil, rlErr
 	}
 	return request, nil
 }

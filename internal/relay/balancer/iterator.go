@@ -59,6 +59,11 @@ func (it *Iterator) Next() bool {
 	return it.index < len(it.candidates)
 }
 
+// Reset 重置迭代位置，用于限流等待后重新遍历。保留 candidates 和 attempts。
+func (it *Iterator) Reset() {
+	it.index = -1
+}
+
 // Item 返回当前候选的 GroupItem
 func (it *Iterator) Item() model.GroupItem {
 	return it.candidates[it.index]
