@@ -524,7 +524,7 @@
             "channelProxy": "Channel Proxy",
             "channelProxyPlaceholder": "Optional: proxy for this channel (overrides global proxy)",
             "paramOverride": "Param Override",
-            "paramOverridePlaceholder": "Optional: JSON string to override request params",
+            "paramOverridePlaceholder": "JSON string. Use {\"model\": {\"key\": \"value\"}} to override per-model, or {\"key\": \"value\"} to override all models",
             "model": "Model",
             "enabled": "Enabled",
             "proxy": "Use Proxy",

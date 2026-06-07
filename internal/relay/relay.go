@@ -415,17 +415,22 @@ func (ra *relayAttempt) applyChannelRequestOptions(outboundRequest *httpclient.R
 		if err := json.Unmarshal(outboundRequest.Body, &bodyMap); err != nil {
 			log.Warnf("failed to unmarshal request body: %v, skipping param_override", err)
 		} else {
-			var override map[string]any
-			if err := json.Unmarshal([]byte(*ra.channel.ParamOverride), &override); err != nil {
+			var raw map[string]any
+			if err := json.Unmarshal([]byte(*ra.channel.ParamOverride), &raw); err != nil {
 				log.Warnf("failed to unmarshal param_override: %v, skipping", err)
 			} else {
-				maps.Copy(bodyMap, override)
-				modifiedBody, err := json.Marshal(bodyMap)
-				if err != nil {
-					log.Warnf("failed to marshal modified body: %v, skipping param_override", err)
-				} else {
-					outboundRequest.Body = modifiedBody
-					ra.metrics.ParamOverride = *ra.channel.ParamOverride
+				override := resolveModelOverride(raw, bodyMap["model"])
+				if override != nil {
+					maps.Copy(bodyMap, override)
+					modifiedBody, err := json.Marshal(bodyMap)
+					if err != nil {
+						log.Warnf("failed to marshal modified body: %v, skipping param_override", err)
+					} else {
+						outboundRequest.Body = modifiedBody
+						if effectiveJSON, err := json.Marshal(override); err == nil {
+							ra.metrics.ParamOverride = string(effectiveJSON)
+						}
+					}
 				}
 			}
 		}
@@ -437,6 +442,31 @@ func (ra *relayAttempt) applyChannelRequestOptions(outboundRequest *httpclient.R
 		}
 		outboundRequest.Headers.Set(header.HeaderKey, header.HeaderValue)
 	}
+}
+// resolveModelOverride selects the correct override from param_override JSON.
+// New format: top-level keys are model names, values are override objects.
+// Old format: top-level keys are param names (non-object values) → applies to all models.
+// Returns nil if the new format has no match for the given model.
+func resolveModelOverride(raw map[string]any, model any) map[string]any {
+	// Detect new format: all top-level values are objects (model→override mapping).
+	isModelMap := len(raw) > 0
+	for _, v := range raw {
+		if _, ok := v.(map[string]any); !ok {
+			isModelMap = false
+			break
+		}
+	}
+	if !isModelMap {
+		return raw // old format, applies to all models
+	}
+	modelName, ok := model.(string)
+	if !ok || modelName == "" {
+		return nil
+	}
+	if ov, ok := raw[modelName].(map[string]any); ok {
+		return ov
+	}
+	return nil
 }
 
 // writeStream writes pipeline output (client-format stream) back to the requester, preserving first-token timeout switch-channel behavior.
