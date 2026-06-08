@@ -6,10 +6,13 @@ import (
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/transformer"
 	"github.com/looplj/axonhub/llm/transformer/anthropic"
+	"github.com/looplj/axonhub/llm/transformer/bailian"
+	"github.com/looplj/axonhub/llm/transformer/deepseek"
 	"github.com/looplj/axonhub/llm/transformer/doubao"
 	"github.com/looplj/axonhub/llm/transformer/gemini"
 	"github.com/looplj/axonhub/llm/transformer/openai"
 	"github.com/looplj/axonhub/llm/transformer/openai/responses"
+	"github.com/looplj/axonhub/llm/transformer/openrouter"
 	dbmodel "github.com/vrichv/octopus-pro/internal/model"
 )
 
@@ -47,7 +50,10 @@ func newOutbound(channelType llm.APIFormat, request *llm.Request, baseURL, key s
 		switch channelType {
 		case llm.APIFormatOpenAIChatCompletion,
 			llm.APIFormatOpenAIResponse,
-			llm.APIFormatOpenAIEmbedding:
+			llm.APIFormatOpenAIEmbedding,
+			dbmodel.ChannelTypeDeepSeek,
+			dbmodel.ChannelTypeOpenRouter,
+			dbmodel.ChannelTypeBailian:
 			return openai.NewOutboundTransformer(baseURL, key)
 		case llm.APIFormatGeminiContents:
 			return gemini.NewOutboundTransformer(baseURL, key)
@@ -62,7 +68,10 @@ func newOutbound(channelType llm.APIFormat, request *llm.Request, baseURL, key s
 			llm.APIFormatOpenAIResponse,
 			llm.APIFormatOpenAIImageGeneration,
 			llm.APIFormatOpenAIImageEdit,
-			llm.APIFormatOpenAIImageVariation:
+			llm.APIFormatOpenAIImageVariation,
+			dbmodel.ChannelTypeDeepSeek,
+			dbmodel.ChannelTypeOpenRouter,
+			dbmodel.ChannelTypeBailian:
 			return openai.NewOutboundTransformer(baseURL, key)
 		case llm.APIFormatGeminiContents:
 			return gemini.NewOutboundTransformer(baseURL, key)
@@ -83,6 +92,12 @@ func newOutbound(channelType llm.APIFormat, request *llm.Request, baseURL, key s
 			return gemini.NewOutboundTransformer(baseURL, key)
 		case dbmodel.ChannelTypeDoubao:
 			return doubao.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeDeepSeek:
+			return deepseek.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeOpenRouter:
+			return openrouter.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeBailian:
+			return bailian.NewOutboundTransformer(baseURL, key)
 		default:
 			return nil, fmt.Errorf("channel type %s is not compatible with %s request", channelType, requestType)
 		}

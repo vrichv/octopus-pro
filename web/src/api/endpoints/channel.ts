@@ -13,6 +13,9 @@ export enum ChannelType {
     Gemini = 'gemini/contents',
     Volcengine = 'doubao',
     OpenAIEmbedding = 'openai/embeddings',
+    DeepSeek = 'deepseek/chat_completions',
+    OpenRouter = 'openrouter/chat_completions',
+    Bailian = 'bailian/chat_completions',
 }
 
 /**
