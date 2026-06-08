@@ -187,7 +187,7 @@ type exportPayload struct {
 func exportAnalysis(c *gin.Context) {
 	hoursStr := c.DefaultQuery("hours", "24")
 	hours, err := strconv.Atoi(hoursStr)
-	if err != nil || hours < 1 || hours > 72 {
+	if err != nil || hours < 1 || hours > 96 {
 		resp.Error(c, http.StatusBadRequest, "invalid hours parameter")
 		return
 	}

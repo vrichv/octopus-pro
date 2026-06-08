@@ -22,6 +22,7 @@ export function SettingLog() {
     const [keepPeriod, setKeepPeriod] = useState('7');
     const [isClearing, setIsClearing] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+    const [analysisHours, setAnalysisHours] = useState('24');
     const [contentEnabled, setContentEnabled] = useState(false);
     const [experimentalEnabled, setExperimentalEnabled] = useState(false);
 
@@ -111,8 +112,11 @@ export function SettingLog() {
     };
 
     const handleExportAnalysis = () => {
+        const parsedHours = Number.parseInt(analysisHours, 10);
+        const hours = Number.isNaN(parsedHours) ? 24 : Math.min(96, Math.max(1, parsedHours));
+        setAnalysisHours(String(hours));
         setIsExporting(true);
-        exportAnalysis.mutate(24, {
+        exportAnalysis.mutate(hours, {
             onSuccess: (data) => {
                 toast.success(`日志分析已导出: ${data.file}，共 ${data.records} 条记录`);
                 setIsExporting(false);
@@ -181,15 +185,27 @@ export function SettingLog() {
                     <Download className="h-5 w-5 text-muted-foreground" />
                     <span className="text-sm font-medium">导出日志分析</span>
                 </div>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleExportAnalysis}
-                    disabled={isExporting}
-                    className="rounded-xl"
-                >
-                    {isExporting ? '导出中...' : '导出分析'}
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Input
+                        type="number"
+                        min={1}
+                        max={96}
+                        value={analysisHours}
+                        onChange={(e) => setAnalysisHours(e.target.value)}
+                        className="w-24 rounded-xl"
+                        disabled={isExporting}
+                    />
+                    <span className="text-sm text-muted-foreground">小时</span>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleExportAnalysis}
+                        disabled={isExporting}
+                        className="rounded-xl"
+                    >
+                        {isExporting ? '导出中...' : '导出分析'}
+                    </Button>
+                </div>
             </div>
             </>
             )}
