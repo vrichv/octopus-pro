@@ -14,11 +14,16 @@
 
  - 😂 **自用修改** - AI代码，内网使用，能跑就行，不做保证
 
--  🚀 **Key级代理** - 支持单独设置每个Key的代理地址
--  🎯 **Key级调度** - 支持Key级的调度策略（成本优先或轮询）
--  🚦 **限流** - 支持Key级，渠道级的限流配置
--  💪 **增强健壮性** - 提升返回错误处理，日志增强，性能增强，Bug修复
--  🔥 **基于最新版本** - 基于Dev最新版本，使用axonhub/llm
+-  🚀 **Key级代理** - 支持单独设置每个 Key 的代理地址
+-  🎯 **Key级调度** - 支持 Key 级成本优先、轮询、限流与 429 冷却调度
+-  🚦 **限流增强** - 支持 Key 级、渠道级限流
+-  🧩 **渠道增强** - 支持 DeepSeek、OpenRouter、阿里百炼等渠道类型
+-  🧰 **参数覆盖** - 支持渠道 `param_override`，并可按模型分别配置覆盖规则
+-  🛡️ **隐私过滤** - 可选启用请求隐私过滤，对常见 PII 与密钥类内容进行脱敏
+-  ⏱️ **流式超时控制** - 支持上游超时、首字超时、流空闲超时、流硬超时，适配 Nvidia NIM，Modelscope 等免费供应商的特殊场景
+-  🧾 **日志增强** - 支持请求/响应内容记录开关、出站 Key 后缀展示、结构化日志分析导出
+-  💪 **增强健壮性** - 提升返回错误处理、限流等待、同渠道 Key 重试、日志增强、性能增强与 Bug 修复
+-  🔥 **基于最新版本** - 基于 Dev 最新版本，使用 axonhub/llm
 
 ## ✨ 特性
 
@@ -389,3 +394,4 @@ base_url = "http://127.0.0.1:8080/v1"
 - 🙏 [looplj/axonhub](https://github.com/looplj/axonhub) - 本项目的 LLM API 适配模块直接源自该仓库的实现
 - 📊 [sst/models.dev](https://github.com/sst/models.dev) - AI 模型数据库，提供模型价格数据
 - 🇨🇳 [AtomGit](https://atomgit.com/bestruirui/octopus) - 原版国内代码托管
+- ㊙ [privacy-filter](https://github.com/packyme/privacy-filter) - 本项目使用了privacy-filter实现请求隐私过滤

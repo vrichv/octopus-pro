@@ -12,12 +12,17 @@ English | [简体中文](README_zh.md)
 
 ## ❤ Pro Version Features
 
-- 😂 **Personal fork** - AI-generated code, for internal use. If it runs, it's fine. No guarantees.
-- 🚀 **Key-level Proxy** - Set a separate proxy address for each API key
-- 🎯 **Key-level Scheduling** - Per-key scheduling strategy (cost priority or round robin)
-- 🚦 **Rate Limiting** - Per-key and per-channel rate limiting configuration
-- 💪 **Enhanced Robustness** - Improved error handling, enhanced logging, performance improvements, bug fixes
-- 🔥 **Based on latest version** - Built on the latest dev branch, using axonhub/llm
+:- 😂 **Personal fork** - AI-generated code, for internal use. If it runs, it's fine. No guarantees.
+:- 🚀 **Key-level Proxy** - Set a separate proxy address for each API key
+:- 🎯 **Key-level Scheduling** - Per-key cost priority, round robin, rate limiting, and 429 cooldown scheduling
+:- 🚦 **Rate Limiting** - Per-key and per-channel rate limiting configuration
+:- 🧩 **Channel Enhancement** - Support for DeepSeek, OpenRouter, Alibaba Bailian and other channel types
+:- 🧰 **Parameter Override** - Support channel `param_override` with per-model override rules
+:- 🛡️ **Privacy Filtering** - Optional request privacy filtering to mask common PII and sensitive keys
+:- ⏱️ **Streaming Timeout Control** - Supports upstream timeout, first-token timeout, streaming idle timeout, and streaming hard timeout. Compatible with special scenarios from free providers like Nvidia NIM and Modelscope
+:- 🧾 **Enhanced Logging** - Request/response content logging toggle, outbound key suffix display, structured log analysis export
+:- 💪 **Enhanced Robustness** - Improved error handling, rate limiting wait, same-channel key retry, enhanced logging, performance improvements, and bug fixes
+:- 🔥 **Based on latest version** - Built on the latest dev branch, using axonhub/llm
 
 ## ✨ Features
 
@@ -387,3 +392,4 @@ Edit `~/.codex/auth.json`
 - 🙏 [looplj/axonhub](https://github.com/looplj/axonhub) - The LLM API adaptation module in this project is directly derived from this repository
 - 📊 [sst/models.dev](https://github.com/sst/models.dev) - AI model database providing model pricing data
 - 🇨🇳 [AtomGit](https://atomgit.com/bestruirui/octopus) - China-based code hosting for the original project
+- ㊙ [privacy-filter](https://github.com/packyme/privacy-filter) - This project uses privacy-filter for request privacy filtering
