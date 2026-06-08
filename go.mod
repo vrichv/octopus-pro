@@ -9,7 +9,7 @@ require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/looplj/axonhub/llm v0.0.0-20260601140055-c6ee88fd1d74
+	github.com/looplj/axonhub/llm v0.0.0-20260602141936-23ae5f0da584
 	github.com/samber/lo v1.52.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
