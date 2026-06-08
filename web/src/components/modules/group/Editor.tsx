@@ -25,6 +25,9 @@ export type GroupEditorValues = {
     match_regex: string;
     mode: GroupMode;
     first_token_time_out: number;
+    upstream_time_out: number;
+    stream_idle_time_out: number;
+    stream_hard_time_out: number;
     session_keep_time: number;
     members: SelectedMember[];
 };
@@ -256,6 +259,9 @@ export function GroupEditor({
     const [matchRegex, setMatchRegex] = useState(initial?.match_regex ?? '');
     const [mode, setMode] = useState<GroupMode>((initial?.mode ?? 1) as GroupMode);
     const [firstTokenTimeOut, setFirstTokenTimeOut] = useState<number>(initial?.first_token_time_out ?? 0);
+    const [upstreamTimeOut, setUpstreamTimeOut] = useState<number>(initial?.upstream_time_out ?? 0);
+    const [streamIdleTimeOut, setStreamIdleTimeOut] = useState<number>(initial?.stream_idle_time_out ?? 0);
+    const [streamHardTimeOut, setStreamHardTimeOut] = useState<number>(initial?.stream_hard_time_out ?? 0);
     const [sessionKeepTime, setSessionKeepTime] = useState<number>(initial?.session_keep_time ?? 0);
     const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>(initial?.members ?? []);
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
@@ -339,6 +345,9 @@ export function GroupEditor({
             match_regex: regexKey,
             mode,
             first_token_time_out: firstTokenTimeOut,
+            upstream_time_out: upstreamTimeOut,
+            stream_idle_time_out: streamIdleTimeOut,
+            stream_hard_time_out: streamHardTimeOut,
             session_keep_time: sessionKeepTime,
             members: selectedMembers,
         });
@@ -404,6 +413,108 @@ export function GroupEditor({
                                     }
                                     const n = Number.parseInt(raw, 10);
                                     setFirstTokenTimeOut(Number.isFinite(n) && n > 0 ? n : 0);
+                                }}
+                                className="rounded-xl"
+                            />
+                        </Field>
+
+                        <Field>
+                            <FieldLabel htmlFor="group-upstream-time-out">
+                                {t('form.upstreamTimeOut')}
+                                <TooltipProvider>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <HelpCircle className="size-4 text-muted-foreground cursor-help" />
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            {t('form.upstreamTimeOutHint')}
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
+                            </FieldLabel>
+                            <Input
+                                id="group-upstream-time-out"
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                step={1}
+                                value={String(upstreamTimeOut)}
+                                onChange={(e) => {
+                                    const raw = e.target.value;
+                                    if (raw.trim() === '') {
+                                        setUpstreamTimeOut(0);
+                                        return;
+                                    }
+                                    const n = Number.parseInt(raw, 10);
+                                    setUpstreamTimeOut(Number.isFinite(n) && n > 0 ? n : 0);
+                                }}
+                                className="rounded-xl"
+                            />
+                        </Field>
+
+                        <Field>
+                            <FieldLabel htmlFor="group-stream-idle-time-out">
+                                {t('form.streamIdleTimeOut')}
+                                <TooltipProvider>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <HelpCircle className="size-4 text-muted-foreground cursor-help" />
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            {t('form.streamIdleTimeOutHint')}
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
+                            </FieldLabel>
+                            <Input
+                                id="group-stream-idle-time-out"
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                step={1}
+                                value={String(streamIdleTimeOut)}
+                                onChange={(e) => {
+                                    const raw = e.target.value;
+                                    if (raw.trim() === '') {
+                                        setStreamIdleTimeOut(0);
+                                        return;
+                                    }
+                                    const n = Number.parseInt(raw, 10);
+                                    setStreamIdleTimeOut(Number.isFinite(n) && n > 0 ? n : 0);
+                                }}
+                                className="rounded-xl"
+                            />
+                        </Field>
+
+                        <Field>
+                            <FieldLabel htmlFor="group-stream-hard-time-out">
+                                {t('form.streamHardTimeOut')}
+                                <TooltipProvider>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <HelpCircle className="size-4 text-muted-foreground cursor-help" />
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            {t('form.streamHardTimeOutHint')}
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
+                            </FieldLabel>
+                            <Input
+                                id="group-stream-hard-time-out"
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                step={1}
+                                value={String(streamHardTimeOut)}
+                                onChange={(e) => {
+                                    const raw = e.target.value;
+                                    if (raw.trim() === '') {
+                                        setStreamHardTimeOut(0);
+                                        return;
+                                    }
+                                    const n = Number.parseInt(raw, 10);
+                                    setStreamHardTimeOut(Number.isFinite(n) && n > 0 ? n : 0);
                                 }}
                                 className="rounded-xl"
                             />

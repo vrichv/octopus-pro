@@ -33,6 +33,9 @@ export interface Group {
     mode: GroupMode;
     match_regex: string;
     first_token_time_out?: number;
+    upstream_time_out?: number;
+    stream_idle_time_out?: number;
+    stream_hard_time_out?: number;
     session_keep_time?: number;
     items?: GroupItem[];
 }
@@ -65,6 +68,9 @@ export interface GroupUpdateRequest {
     mode?: GroupMode;                     // 仅在模式变更时发送
     match_regex?: string;                 // 仅在匹配正则变更时发送
     first_token_time_out?: number;        // 仅在超时变更时发送
+    upstream_time_out?: number;          // 仅在上游请求超时变更时发送
+    stream_idle_time_out?: number;       // 仅在流空闲超时变更时发送
+    stream_hard_time_out?: number;       // 仅在流硬超时变更时发送
     session_keep_time?: number;           // 仅在会话保持时间变更时发送
     items_to_add?: GroupItemAddRequest[];    // 新增的 items
     items_to_update?: GroupItemUpdateRequest[]; // 更新的 items (priority 变更)

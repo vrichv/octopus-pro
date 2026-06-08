@@ -102,6 +102,18 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		selectFields = append(selectFields, "first_token_time_out")
 		updates.FirstTokenTimeOut = *req.FirstTokenTimeOut
 	}
+	if req.UpstreamTimeOut != nil {
+		selectFields = append(selectFields, "upstream_time_out")
+		updates.UpstreamTimeOut = *req.UpstreamTimeOut
+	}
+	if req.StreamIdleTimeOut != nil {
+		selectFields = append(selectFields, "stream_idle_time_out")
+		updates.StreamIdleTimeOut = *req.StreamIdleTimeOut
+	}
+	if req.StreamHardTimeOut != nil {
+		selectFields = append(selectFields, "stream_hard_time_out")
+		updates.StreamHardTimeOut = *req.StreamHardTimeOut
+	}
 	if req.SessionKeepTime != nil {
 		selectFields = append(selectFields, "session_keep_time")
 		updates.SessionKeepTime = *req.SessionKeepTime

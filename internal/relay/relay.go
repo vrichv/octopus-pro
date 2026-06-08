@@ -291,7 +291,7 @@ func (ra *relayAttempt) run() (bool, error) {
 			RequestFailed: 1,
 		})
 		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
-		return ra.c.Writer.Written(), fmt.Errorf("channel %s auth error (%d): %v", ra.channel.Name, statusCode, fwdErr)
+		return ra.hasWrittenResponse(), fmt.Errorf("channel %s auth error (%d): %v", ra.channel.Name, statusCode, fwdErr)
 
 	case http.StatusTooManyRequests: // 429 — cool down this key
 		update := op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone}
@@ -304,7 +304,7 @@ func (ra *relayAttempt) run() (bool, error) {
 			WaitTime:      span.Duration().Milliseconds(),
 			RequestFailed: 1,
 		})
-		return ra.c.Writer.Written(), fmt.Errorf("channel %s rate limited (429): %v", ra.channel.Name, fwdErr)
+		return ra.hasWrittenResponse(), fmt.Errorf("channel %s rate limited (429): %v", ra.channel.Name, fwdErr)
 
 	case http.StatusNotFound: // 404 — switch channel
 		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone})
@@ -314,7 +314,7 @@ func (ra *relayAttempt) run() (bool, error) {
 			RequestFailed: 1,
 		})
 		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
-		return ra.c.Writer.Written(), fmt.Errorf("channel %s not found (404): %v", ra.channel.Name, fwdErr)
+		return ra.hasWrittenResponse(), fmt.Errorf("channel %s not found (404): %v", ra.channel.Name, fwdErr)
 
 	default: // 5xx/network error → circuit breaker
 		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone})
@@ -324,8 +324,12 @@ func (ra *relayAttempt) run() (bool, error) {
 			RequestFailed: 1,
 		})
 		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
-		return ra.c.Writer.Written(), fmt.Errorf("channel %s failed: %v", ra.channel.Name, fwdErr)
+		return ra.hasWrittenResponse(), fmt.Errorf("channel %s failed: %v", ra.channel.Name, fwdErr)
 	}
+}
+
+func (ra *relayAttempt) hasWrittenResponse() bool {
+	return ra.responseWritten || ra.c.Writer.Written()
 }
 
 func (ra *relayAttempt) applyKeyRuntimeUpdate(update op.ChannelKeyRuntimeUpdate) dbmodel.ChannelKey {
@@ -400,6 +404,12 @@ func (ra *relayAttempt) forward() (int, error) {
 		}),
 		plugins.NewLogger(logFields),
 	}
+	processCtx := ctx
+	var cancel context.CancelFunc
+	if ra.group.UpstreamTimeOut > 0 {
+		processCtx, cancel = context.WithTimeout(ctx, time.Duration(ra.group.UpstreamTimeOut)*time.Second)
+		defer cancel()
+	}
 	result, err := pipeline.NewFactory(httpclient.NewHttpClientWithClient(httpClient)).
 		Pipeline(
 			&parsedRequestInbound{Inbound: ra.inAdapter, request: ra.internalRequest},
@@ -407,8 +417,11 @@ func (ra *relayAttempt) forward() (int, error) {
 			pipeline.WithMiddlewares(middlewares...),
 			pipeline.WithEmptyResponseDetection(),
 		).
-		Process(ctx, ra.internalRequest.RawRequest)
+		Process(processCtx, ra.internalRequest.RawRequest)
 	if err != nil {
+		if processCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			err = fmt.Errorf("upstream timeout (%ds): %w", ra.group.UpstreamTimeOut, context.DeadlineExceeded)
+		}
 		plugins.LogUpstreamError(logFields, err)
 		var upstreamErr *httpclient.Error
 		if errors.As(err, &upstreamErr) {
@@ -436,11 +449,16 @@ func (ra *relayAttempt) forward() (int, error) {
 	if result.Response == nil {
 		return 0, fmt.Errorf("empty pipeline response")
 	}
-	ra.metrics.InternalResponse = result.Response.Body
 	statusCode := result.Response.StatusCode
 	if statusCode == 0 {
 		statusCode = http.StatusOK
 	}
+	if statusCode == http.StatusOK {
+		if msg := successShapedError(result.Response.Body); msg != "" {
+			return 0, fmt.Errorf("success-shaped upstream error: %s", msg)
+		}
+	}
+	ra.metrics.InternalResponse = result.Response.Body
 	contentType := "application/json"
 	if result.Response.Headers != nil {
 		for key, values := range result.Response.Headers {
@@ -517,6 +535,46 @@ func resolveModelOverride(raw map[string]any, model any) map[string]any {
 	return nil
 }
 
+func successShapedError(body []byte) string {
+	trimmed := strings.TrimSpace(string(body))
+	if len(trimmed) == 0 || len(trimmed) > 512 {
+		return ""
+	}
+
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+			Error   struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+		if payload.Error.Message != "" {
+			return payload.Error.Message
+		}
+		if payload.Error.Error.Message != "" {
+			return payload.Error.Error.Message
+		}
+	}
+
+	lower := strings.ToLower(trimmed)
+	for _, signature := range [...]string{
+		"model is currently unavailable",
+		"rate limit exceeded",
+		"internal server error",
+		"upstream connect error",
+		"gateway timeout",
+		"too many requests",
+		"model not found",
+	} {
+		if strings.Contains(lower, signature) {
+			return lower
+		}
+	}
+	return ""
+}
+
 // writeStream writes pipeline output (client-format stream) back to the requester, preserving first-token timeout switch-channel behavior.
 func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.Stream[*httpclient.StreamEvent]) error {
 	if clientStream == nil {
@@ -583,6 +641,28 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 		}()
 	}
 
+	streamHardTimeOutSec := ra.group.StreamHardTimeOut
+	var streamHardTimer *time.Timer
+	var streamHardC <-chan time.Time
+	if streamHardTimeOutSec > 0 {
+		streamHardTimer = time.NewTimer(time.Duration(streamHardTimeOutSec) * time.Second)
+		streamHardC = streamHardTimer.C
+		defer func() {
+			if streamHardTimer != nil {
+				streamHardTimer.Stop()
+			}
+		}()
+	}
+
+	streamIdleTimeOutSec := ra.group.StreamIdleTimeOut
+	var streamIdleTimer *time.Timer
+	var streamIdleC <-chan time.Time
+	defer func() {
+		if streamIdleTimer != nil {
+			streamIdleTimer.Stop()
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -593,6 +673,14 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			log.Warnf("first token timeout (%ds), switching channel", firstTokenTimeoutSec)
 			_ = clientStream.Close()
 			return fmt.Errorf("first token timeout (%ds)", firstTokenTimeoutSec)
+		case <-streamHardC:
+			log.Warnf("stream hard timeout (%ds), stopping stream", streamHardTimeOutSec)
+			_ = clientStream.Close()
+			return fmt.Errorf("stream hard timeout (%ds)", streamHardTimeOutSec)
+		case <-streamIdleC:
+			log.Warnf("stream idle timeout (%ds), stopping stream", streamIdleTimeOutSec)
+			_ = clientStream.Close()
+			return fmt.Errorf("stream idle timeout (%ds)", streamIdleTimeOutSec)
 		case r, ok := <-results:
 			if !ok {
 				log.Infof("stream end")
@@ -618,6 +706,12 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			if r.event == nil || len(r.event.Data) == 0 {
 				continue
 			}
+			if firstToken {
+				if msg := successShapedError(r.event.Data); msg != "" {
+					_ = clientStream.Close()
+					return fmt.Errorf("success-shaped upstream stream error: %s", msg)
+				}
+			}
 			// temporarily store pipeline-converted client-format events; aggregate into final response body for logging after normal completion; no per-chunk persistence.
 			responseEvents = append(responseEvents, r.event)
 			if firstToken {
@@ -633,9 +727,22 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 					firstTokenTimer = nil
 					firstTokenC = nil
 				}
+				if streamIdleTimeOutSec > 0 {
+					streamIdleTimer = time.NewTimer(time.Duration(streamIdleTimeOutSec) * time.Second)
+					streamIdleC = streamIdleTimer.C
+				}
+			} else if streamIdleTimer != nil {
+				if !streamIdleTimer.Stop() {
+					select {
+					case <-streamIdleTimer.C:
+					default:
+					}
+				}
+				streamIdleTimer.Reset(time.Duration(streamIdleTimeOutSec) * time.Second)
 			}
 
 			ra.c.SSEvent(r.event.Type, r.event.Data)
+			ra.responseWritten = true
 			ra.c.Writer.Flush()
 		}
 	}

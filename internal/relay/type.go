@@ -30,4 +30,5 @@ type relayAttempt struct {
 	retryAfter    time.Duration // 429 响应中 Retry-After 指定的冷却时长
 	rateLimited   bool          // 本次尝试因本地限流失败
 	rateLimitWait time.Duration // 限流等待时间
+	responseWritten bool          // true after streaming writes a client-visible event
 }

@@ -15,6 +15,9 @@ type Group struct {
 	Mode              GroupMode   `json:"mode" gorm:"not null"`
 	MatchRegex        string      `json:"match_regex"`
 	FirstTokenTimeOut int         `json:"first_token_time_out"` // 单个渠道首个Token响应超时时间(秒)
+	UpstreamTimeOut   int         `json:"upstream_time_out"`     // 上游请求超时(秒)：覆盖pipeline.Process阶段，0为禁用
+	StreamIdleTimeOut int         `json:"stream_idle_time_out"`  // 流空闲超时(秒)：流建立后两个事件之间的最大间隔，0为禁用
+	StreamHardTimeOut int         `json:"stream_hard_time_out"`  // 流硬超时(秒)：流建立后的最大持续时间，0为禁用
 	SessionKeepTime   int         `json:"session_keep_time"`    // 会话保持时间(秒) 0 为禁用
 	Items             []GroupItem `json:"items,omitempty" gorm:"foreignKey:GroupID"`
 }
@@ -35,6 +38,9 @@ type GroupUpdateRequest struct {
 	Mode              *GroupMode               `json:"mode,omitempty"`                 // 仅在模式变更时发送
 	MatchRegex        *string                  `json:"match_regex,omitempty"`          // 仅在匹配正则变更时发送
 	FirstTokenTimeOut *int                     `json:"first_token_time_out,omitempty"` // 仅在超时变更时发送(秒)
+	UpstreamTimeOut   *int                     `json:"upstream_time_out,omitempty"`    // 上游请求超时(秒)
+	StreamIdleTimeOut *int                     `json:"stream_idle_time_out,omitempty"` // 流空闲超时(秒)
+	StreamHardTimeOut *int                     `json:"stream_hard_time_out,omitempty"` // 流硬超时(秒)
 	SessionKeepTime   *int                     `json:"session_keep_time,omitempty"`    // 仅在会话保持时间变更时发送(秒)
 	ItemsToAdd        []GroupItemAddRequest    `json:"items_to_add,omitempty"`         // 新增的 items
 	ItemsToUpdate     []GroupItemUpdateRequest `json:"items_to_update,omitempty"`      // 更新的 items (priority 变更)

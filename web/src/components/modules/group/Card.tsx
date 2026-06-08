@@ -54,6 +54,9 @@ function EditDialogContent({ group, displayMembers, isSubmitting, onSubmit }: Ed
                         match_regex: group.match_regex ?? '',
                         mode: group.mode,
                         first_token_time_out: group.first_token_time_out ?? 0,
+                        upstream_time_out: group.upstream_time_out ?? 0,
+                        stream_idle_time_out: group.stream_idle_time_out ?? 0,
+                        stream_hard_time_out: group.stream_hard_time_out ?? 0,
                         session_keep_time: group.session_keep_time ?? 0,
                         members: displayMembers,
                     }}
@@ -74,11 +77,6 @@ export function GroupCard({ group }: { group: Group }) {
     const deleteGroup = useDeleteGroup();
     const { data: modelChannels = [] } = useModelChannelList();
 
-    const [confirmDelete, setConfirmDelete] = useState(false);
-    const [members, setMembers] = useState<SelectedMember[]>([]);
-    const isDragging = useRef(false);
-    const weightTimerRef = useRef<NodeJS.Timeout | null>(null);
-    const membersRef = useRef<SelectedMember[]>([]);
 
     const channelNameByKey = useMemo(() => buildChannelNameByModelKey(modelChannels), [modelChannels]);
     const enabledByKey = useMemo(() => {
@@ -104,9 +102,23 @@ export function GroupCard({ group }: { group: Group }) {
         [group.items, channelNameByKey, enabledByKey]
     );
 
-    useEffect(() => {
-        if (!isDragging.current) setMembers([...displayMembers]);
-    }, [displayMembers]);
+    const displayMembersKey = useMemo(
+        () => displayMembers.map((member) => `${member.item_id ?? ''}:${member.channel_id}:${member.name}:${member.channel_name}:${member.weight ?? 1}:${member.enabled}`).join('|'),
+        [displayMembers]
+    );
+
+    const [confirmDelete, setConfirmDelete] = useState(false);
+    const [syncedMembersKey, setSyncedMembersKey] = useState(displayMembersKey);
+    const [members, setMembers] = useState<SelectedMember[]>(() => [...displayMembers]);
+    const [isDragging, setIsDragging] = useState(false);
+    const weightTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const membersRef = useRef<SelectedMember[]>(members);
+
+    if (!isDragging && syncedMembersKey !== displayMembersKey) {
+        setSyncedMembersKey(displayMembersKey);
+        setMembers([...displayMembers]);
+    }
+
 
     useEffect(() => {
         membersRef.current = members;
@@ -135,8 +147,8 @@ export function GroupCard({ group }: { group: Group }) {
         return map;
     }, [group.items]);
 
-    const handleDragStart = useCallback(() => { isDragging.current = true; }, []);
-    const handleDragFinish = useCallback(() => { isDragging.current = false; }, []);
+    const handleDragStart = useCallback(() => { setIsDragging(true); }, []);
+    const handleDragFinish = useCallback(() => { setIsDragging(false); }, []);
 
     const handleDropReorder = useCallback((nextMembers: SelectedMember[]) => {
         const itemsToUpdate = nextMembers
@@ -215,12 +227,18 @@ export function GroupCard({ group }: { group: Group }) {
         const nextName = values.name.trim();
         const nextRegex = (values.match_regex ?? '').trim();
         const nextFirstTokenTimeOut = values.first_token_time_out ?? 0;
+        const nextUpstreamTimeOut = values.upstream_time_out ?? 0;
+        const nextStreamIdleTimeOut = values.stream_idle_time_out ?? 0;
+        const nextStreamHardTimeOut = values.stream_hard_time_out ?? 0;
         const nextSessionKeepTime = values.session_keep_time ?? 0;
 
         if (nextName && nextName !== group.name) payload.name = nextName;
         if (values.mode !== group.mode) payload.mode = values.mode;
         if (nextRegex !== (group.match_regex ?? '')) payload.match_regex = nextRegex;
         if (nextFirstTokenTimeOut !== (group.first_token_time_out ?? 0)) payload.first_token_time_out = nextFirstTokenTimeOut;
+        if (nextUpstreamTimeOut !== (group.upstream_time_out ?? 0)) payload.upstream_time_out = nextUpstreamTimeOut;
+        if (nextStreamIdleTimeOut !== (group.stream_idle_time_out ?? 0)) payload.stream_idle_time_out = nextStreamIdleTimeOut;
+        if (nextStreamHardTimeOut !== (group.stream_hard_time_out ?? 0)) payload.stream_hard_time_out = nextStreamHardTimeOut;
         if (nextSessionKeepTime !== (group.session_keep_time ?? 0)) payload.session_keep_time = nextSessionKeepTime;
         if (items_to_add.length) payload.items_to_add = items_to_add;
         if (items_to_update.length) payload.items_to_update = items_to_update;
@@ -238,7 +256,7 @@ export function GroupCard({ group }: { group: Group }) {
             },
             onError,
         });
-    }, [group.first_token_time_out, group.session_keep_time, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
+    }, [group.first_token_time_out, group.upstream_time_out, group.stream_idle_time_out, group.stream_hard_time_out, group.session_keep_time, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
 
     return (
         <article className="flex flex-col rounded-3xl border border-border bg-card text-card-foreground p-4 custom-shadow">
