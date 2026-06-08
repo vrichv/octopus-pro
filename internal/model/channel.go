@@ -159,9 +159,9 @@ func (c *Channel) GetChannelKey() ChannelKey {
 			continue
 		}
 
-		// 冷却判定：优先使用动态 RetryAfter，否则按 5 分钟默认冷却
+		// 冷却判定：优先使用动态 RetryAfter，否则按 1 分钟默认冷却
 		if k.StatusCode == 429 && k.LastUseTimeStamp > 0 {
-			cooldown := int64(5*time.Minute/time.Second) + int64(k.ID%60)
+			cooldown := int64(1*time.Minute/time.Second) + int64(k.ID%60)
 			if k.RetryAfter > 0 {
 				cooldown = k.RetryAfter
 			}
