@@ -21,6 +21,9 @@ const (
 var keyRRIndex sync.Map // channelID (int) → *atomic.Int64
 
 const ChannelTypeDoubao llm.APIFormat = "doubao"
+const ChannelTypeDeepSeek llm.APIFormat = "deepseek/chat_completions"
+const ChannelTypeOpenRouter llm.APIFormat = "openrouter/chat_completions"
+const ChannelTypeBailian llm.APIFormat = "bailian/chat_completions"
 
 type Channel struct {
 	ID             int            `json:"id" gorm:"primaryKey"`
@@ -159,9 +162,9 @@ func (c *Channel) GetChannelKey() ChannelKey {
 			continue
 		}
 
-		// 冷却判定：优先使用动态 RetryAfter，否则按 1 分钟默认冷却
+		// 冷却判定：优先使用动态 RetryAfter，否则按 2 分钟默认冷却
 		if k.StatusCode == 429 && k.LastUseTimeStamp > 0 {
-			cooldown := int64(1*time.Minute/time.Second) + int64(k.ID%60)
+			cooldown := int64(2*time.Minute/time.Second) + int64(k.ID%60)
 			if k.RetryAfter > 0 {
 				cooldown = k.RetryAfter
 			}

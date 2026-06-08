@@ -3,6 +3,7 @@ module github.com/vrichv/octopus-pro
 go 1.26.0
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/dlclark/regexp2 v1.11.5
 	github.com/gin-contrib/cors v1.7.6

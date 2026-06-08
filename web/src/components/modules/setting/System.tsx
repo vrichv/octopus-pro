@@ -20,12 +20,14 @@ export function SettingSystem() {
     const [corsAllowOrigins, setCorsAllowOrigins] = useState('');
 
     const [experimentalEnabled, setExperimentalEnabled] = useState(false);
+    const [privacyFilterEnabled, setPrivacyFilterEnabled] = useState(false);
     const [corsInputValue, setCorsInputValue] = useState('');
 
     const initialProxyUrl = useRef('');
     const initialStatsSaveInterval = useRef('');
     const initialCorsAllowOrigins = useRef('');
     const initialExperimentalEnabled = useRef(false);
+    const initialPrivacyFilterEnabled = useRef(false);
 
     useEffect(() => {
         if (settings) {
@@ -49,6 +51,12 @@ export function SettingSystem() {
                 const val = experimental.value === 'true';
                 queueMicrotask(() => setExperimentalEnabled(val));
                 initialExperimentalEnabled.current = val;
+            }
+            const privacyFilter = settings.find(s => s.key === SettingKey.PrivacyFilterEnabled);
+            if (privacyFilter) {
+                const val = privacyFilter.value === 'true';
+                queueMicrotask(() => setPrivacyFilterEnabled(val));
+                initialPrivacyFilterEnabled.current = val;
             }
         }
     }, [settings]);
@@ -78,6 +86,22 @@ export function SettingSystem() {
                 onSuccess: () => {
                     initialExperimentalEnabled.current = checked;
                     toast.success(t('saved'));
+                }
+            }
+        );
+    };
+
+    const handlePrivacyFilterChange = (checked: boolean) => {
+        setPrivacyFilterEnabled(checked);
+        setSetting.mutate(
+            { key: SettingKey.PrivacyFilterEnabled, value: String(checked) },
+            {
+                onSuccess: () => {
+                    initialPrivacyFilterEnabled.current = checked;
+                    toast.success(t('saved'));
+                },
+                onError: () => {
+                    setPrivacyFilterEnabled(!checked);
                 }
             }
         );
@@ -184,6 +208,18 @@ export function SettingSystem() {
                 <Switch
                     checked={experimentalEnabled}
                     onCheckedChange={handleExperimentalChange}
+                />
+            </div>
+
+            {/* 隐私过滤 */}
+            <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                    <Shield className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">{t('privacyFilter.label')}</span>
+                </div>
+                <Switch
+                    checked={privacyFilterEnabled}
+                    onCheckedChange={handlePrivacyFilterChange}
                 />
             </div>
 

@@ -166,6 +166,9 @@
         "experimentalFeatures": {
             "label": "Experimental Features"
         },
+        "privacyFilter": {
+            "label": "Privacy Filter (PII/Secret Redaction)"
+        },
         "corsAllowOrigins": {
             "label": "CORS Allowed Origins",
             "hint": "Empty = deny all, * = allow all",

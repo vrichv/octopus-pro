@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/vrichv/octopus-pro/internal/model"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/pipeline"
+	"github.com/vrichv/octopus-pro/internal/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -104,11 +104,11 @@ func ParseModelRateLimit(spec string) map[string]string {
 
 // rateLimiter 滑动窗口限流器
 type rateLimiter struct {
-	mu       sync.Mutex
-	count    int           // 窗口内允许的最大请求数
-	interval time.Duration // 窗口时长
-	window   []time.Time   // 窗口内请求时间戳
-	lastAccess atomic.Int64 // 最后访问时间（UnixNano）
+	mu         sync.Mutex
+	count      int           // 窗口内允许的最大请求数
+	interval   time.Duration // 窗口时长
+	window     []time.Time   // 窗口内请求时间戳
+	lastAccess atomic.Int64  // 最后访问时间（UnixNano）
 }
 
 func newRateLimiter(count int, interval time.Duration) *rateLimiter {
@@ -189,7 +189,7 @@ func (rl *rateLimiter) TryAllow() *RateLimitedError {
 // ---------------------------------------------------------------------------
 
 var (
-	limiters   sync.Map // key string → *rateLimiter
+	limiters    sync.Map // key string → *rateLimiter
 	limiterOnce sync.Once
 )
 

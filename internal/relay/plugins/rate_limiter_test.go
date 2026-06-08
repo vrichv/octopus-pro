@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vrichv/octopus-pro/internal/model"
 	"github.com/looplj/axonhub/llm/httpclient"
+	"github.com/vrichv/octopus-pro/internal/model"
 )
 
 func TestParseRateSpec(t *testing.T) {

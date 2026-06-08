@@ -395,6 +395,7 @@ func (ra *relayAttempt) forward() (int, error) {
 		ProxyDesc:   proxyDesc,
 	}
 	middlewares := []pipeline.Middleware{
+		plugins.NewPrivacyFilter(),
 		plugins.NewRateLimiter(ra.channel, ra.usedKey.ID, ra.internalRequest.Model),
 		relayMiddleware,
 		stream.EnsureUsage(),
@@ -509,6 +510,7 @@ func (ra *relayAttempt) applyChannelRequestOptions(outboundRequest *httpclient.R
 		outboundRequest.Headers.Set(header.HeaderKey, header.HeaderValue)
 	}
 }
+
 // resolveModelOverride selects the correct override from param_override JSON.
 // New format: top-level keys are model names, values are override objects.
 // Old format: top-level keys are param names (non-object values) → applies to all models.

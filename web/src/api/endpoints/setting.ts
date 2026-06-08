@@ -24,6 +24,7 @@ export const SettingKey = {
     CircuitBreakerCooldown: 'circuit_breaker_cooldown',
     CircuitBreakerMaxCooldown: 'circuit_breaker_max_cooldown',
     ExperimentalFeatures: 'experimental_features',
+    PrivacyFilterEnabled: 'privacy_filter_enabled',
 } as const;
 
 /**

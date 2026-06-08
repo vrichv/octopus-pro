@@ -15,9 +15,9 @@ type Group struct {
 	Mode              GroupMode   `json:"mode" gorm:"not null"`
 	MatchRegex        string      `json:"match_regex"`
 	FirstTokenTimeOut int         `json:"first_token_time_out"` // 单个渠道首个Token响应超时时间(秒)
-	UpstreamTimeOut   int         `json:"upstream_time_out"`     // 上游请求超时(秒)：覆盖pipeline.Process阶段，0为禁用
-	StreamIdleTimeOut int         `json:"stream_idle_time_out"`  // 流空闲超时(秒)：流建立后两个事件之间的最大间隔，0为禁用
-	StreamHardTimeOut int         `json:"stream_hard_time_out"`  // 流硬超时(秒)：流建立后的最大持续时间，0为禁用
+	UpstreamTimeOut   int         `json:"upstream_time_out"`    // 上游请求超时(秒)：覆盖pipeline.Process阶段，0为禁用
+	StreamIdleTimeOut int         `json:"stream_idle_time_out"` // 流空闲超时(秒)：流建立后两个事件之间的最大间隔，0为禁用
+	StreamHardTimeOut int         `json:"stream_hard_time_out"` // 流硬超时(秒)：流建立后的最大持续时间，0为禁用
 	SessionKeepTime   int         `json:"session_keep_time"`    // 会话保持时间(秒) 0 为禁用
 	Items             []GroupItem `json:"items,omitempty" gorm:"foreignKey:GroupID"`
 }

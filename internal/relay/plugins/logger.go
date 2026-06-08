@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/vrichv/octopus-pro/internal/utils/log"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/pipeline"
+	"github.com/vrichv/octopus-pro/internal/utils/log"
 )
 
 // LogFields holds the contextual fields needed for logging.

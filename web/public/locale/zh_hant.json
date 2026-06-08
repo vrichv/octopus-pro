@@ -166,6 +166,9 @@
         "experimentalFeatures": {
             "label": "實驗性功能"
         },
+        "privacyFilter": {
+            "label": "隱私過濾（PII/密鑰脫敏）"
+        },
         "corsAllowOrigins": {
             "label": "CORS 跨網域白名單",
             "hint": "為空禁止跨網域，* 允許所有",
