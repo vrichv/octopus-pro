@@ -83,6 +83,26 @@ export function useClearLogs() {
     });
 }
 
+export interface ExportAnalysisResult {
+    file: string;
+    records: number;
+}
+
+/**
+ * 导出日志分析 Hook
+ */
+export function useExportAnalysis() {
+    return useMutation({
+        mutationFn: async (hours: number = 24) => {
+            return apiClient.get<ExportAnalysisResult>('/api/v1/log/export-analysis', { hours });
+        },
+        onError: (error) => {
+            logger.error('日志分析导出失败:', error);
+        },
+    });
+}
+
+
 const logsInfiniteQueryKey = (pageSize: number) => ['logs', 'infinite', pageSize] as const;
 
 /**

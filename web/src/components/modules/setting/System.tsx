@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Monitor, Globe, Clock, Shield, HelpCircle, X } from 'lucide-react';
+import { Monitor, Globe, Clock, Shield, HelpCircle, X, FlaskConical } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
@@ -17,11 +18,14 @@ export function SettingSystem() {
     const [proxyUrl, setProxyUrl] = useState('');
     const [statsSaveInterval, setStatsSaveInterval] = useState('');
     const [corsAllowOrigins, setCorsAllowOrigins] = useState('');
+
+    const [experimentalEnabled, setExperimentalEnabled] = useState(false);
     const [corsInputValue, setCorsInputValue] = useState('');
 
     const initialProxyUrl = useRef('');
     const initialStatsSaveInterval = useRef('');
     const initialCorsAllowOrigins = useRef('');
+    const initialExperimentalEnabled = useRef(false);
 
     useEffect(() => {
         if (settings) {
@@ -39,6 +43,12 @@ export function SettingSystem() {
             if (cors) {
                 queueMicrotask(() => setCorsAllowOrigins(cors.value));
                 initialCorsAllowOrigins.current = cors.value;
+            }
+            const experimental = settings.find(s => s.key === SettingKey.ExperimentalFeatures);
+            if (experimental) {
+                const val = experimental.value === 'true';
+                queueMicrotask(() => setExperimentalEnabled(val));
+                initialExperimentalEnabled.current = val;
             }
         }
     }, [settings]);
@@ -58,6 +68,19 @@ export function SettingSystem() {
                 }
             }
         });
+    };
+
+    const handleExperimentalChange = (checked: boolean) => {
+        setExperimentalEnabled(checked);
+        setSetting.mutate(
+            { key: SettingKey.ExperimentalFeatures, value: String(checked) },
+            {
+                onSuccess: () => {
+                    initialExperimentalEnabled.current = checked;
+                    toast.success(t('saved'));
+                }
+            }
+        );
     };
 
     const corsAllowOriginsList = useMemo(() => {
@@ -149,6 +172,18 @@ export function SettingSystem() {
                     onBlur={() => handleSave('stats_save_interval', statsSaveInterval, initialStatsSaveInterval.current)}
                     placeholder={t('statsSaveInterval.placeholder')}
                     className="w-48 rounded-xl"
+                />
+            </div>
+
+            {/* 实验性功能 */}
+            <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                    <FlaskConical className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">{t('experimentalFeatures.label')}</span>
+                </div>
+                <Switch
+                    checked={experimentalEnabled}
+                    onCheckedChange={handleExperimentalChange}
                 />
             </div>
 

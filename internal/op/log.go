@@ -258,6 +258,54 @@ func RelayLogList(ctx context.Context, startTime, endTime *int, page, pageSize i
 	return result, nil
 }
 
+// RelayLogListAll queries all relay logs within the time range, from both cache and DB.
+func RelayLogListAll(ctx context.Context, startTime, endTime int64) ([]model.RelayLog, error) {
+	relayLogCacheLock.Lock()
+	var cachedLogs []model.RelayLog
+	for _, log := range relayLogCache {
+		if log.Time >= startTime && log.Time <= endTime {
+			cachedLogs = append(cachedLogs, log)
+		}
+	}
+	relayLogCacheLock.Unlock()
+
+	// Reverse cache so newest first (consistent with DB ordering)
+	for i, j := 0, len(cachedLogs)-1; i < j; i, j = i+1, j-1 {
+		cachedLogs[i], cachedLogs[j] = cachedLogs[j], cachedLogs[i]
+	}
+
+	result := cachedLogs
+
+	enabled, err := SettingGetBool(model.SettingKeyRelayLogKeepEnabled)
+	if err != nil {
+		return nil, err
+	}
+	if enabled {
+		// Get cache IDs to exclude from DB query
+		cacheIDs := make(map[int64]struct{}, len(cachedLogs))
+		for _, log := range cachedLogs {
+			cacheIDs[log.ID] = struct{}{}
+		}
+
+		var dbLogs []model.RelayLog
+		if err := db.GetDB().WithContext(ctx).
+			Where("time >= ? AND time <= ?", startTime, endTime).
+			Order("id DESC").
+			Find(&dbLogs).Error; err != nil {
+			return nil, err
+		}
+
+		// Deduplicate: skip DB records already in cache
+		for _, log := range dbLogs {
+			if _, exists := cacheIDs[log.ID]; !exists {
+				result = append(result, log)
+			}
+		}
+	}
+
+	return result, nil
+}
+
 func RelayLogClear(ctx context.Context) error {
 	relayLogCacheLock.Lock()
 	relayLogCache = make([]model.RelayLog, 0, relayLogMaxSize)

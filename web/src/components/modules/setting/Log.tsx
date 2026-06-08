@@ -2,12 +2,13 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useTranslations } from 'next-intl';
-import { ScrollText, Calendar, Trash2, FileText } from 'lucide-react';
+import { ScrollText, Calendar, Trash2, FileText, Download } from 'lucide-react';
+
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
-import { useClearLogs } from '@/api/endpoints/log';
+import { useClearLogs, useExportAnalysis } from '@/api/endpoints/log';
 import { toast } from '@/components/common/Toast';
 
 export function SettingLog() {
@@ -15,11 +16,14 @@ export function SettingLog() {
     const { data: settings } = useSettingList();
     const setSetting = useSetSetting();
     const clearLogs = useClearLogs();
+    const exportAnalysis = useExportAnalysis();
 
     const [enabled, setEnabled] = useState(true);
     const [keepPeriod, setKeepPeriod] = useState('7');
     const [isClearing, setIsClearing] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
     const [contentEnabled, setContentEnabled] = useState(false);
+    const [experimentalEnabled, setExperimentalEnabled] = useState(false);
 
     const initialEnabled = useRef(true);
     const initialKeepPeriod = useRef('7');
@@ -43,6 +47,11 @@ export function SettingLog() {
                 const isContentEnabled = contentSetting.value === 'true';
                 queueMicrotask(() => setContentEnabled(isContentEnabled));
                 initialContentEnabled.current = isContentEnabled;
+            }
+            const experimentalSetting = settings.find(s => s.key === SettingKey.ExperimentalFeatures);
+            if (experimentalSetting) {
+                const isExperimental = experimentalSetting.value === 'true';
+                queueMicrotask(() => setExperimentalEnabled(isExperimental));
             }
         }
     }, [settings]);
@@ -101,6 +110,20 @@ export function SettingLog() {
         });
     };
 
+    const handleExportAnalysis = () => {
+        setIsExporting(true);
+        exportAnalysis.mutate(24, {
+            onSuccess: (data) => {
+                toast.success(`日志分析已导出: ${data.file}，共 ${data.records} 条记录`);
+                setIsExporting(false);
+            },
+            onError: () => {
+                toast.error('日志分析导出失败');
+                setIsExporting(false);
+            }
+        });
+    };
+
     return (
         <div className="rounded-3xl border border-border bg-card p-6 space-y-5">
             <h2 className="text-lg font-bold text-card-foreground flex items-center gap-2">
@@ -148,6 +171,28 @@ export function SettingLog() {
                     disabled={!enabled}
                 />
             </div>
+
+
+            {experimentalEnabled && (
+            <>
+            {/* 导出日志分析 */}
+            <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                    <Download className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">导出日志分析</span>
+                </div>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleExportAnalysis}
+                    disabled={isExporting}
+                    className="rounded-xl"
+                >
+                    {isExporting ? '导出中...' : '导出分析'}
+                </Button>
+            </div>
+            </>
+            )}
 
             {/* 清空历史日志 */}
             <div className="flex items-center justify-between gap-4">

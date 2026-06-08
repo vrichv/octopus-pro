@@ -163,6 +163,9 @@
             "label": "Stats Save Interval",
             "placeholder": "Enter interval in minutes"
         },
+        "experimentalFeatures": {
+            "label": "Experimental Features"
+        },
         "corsAllowOrigins": {
             "label": "CORS Allowed Origins",
             "hint": "Empty = deny all, * = allow all",
