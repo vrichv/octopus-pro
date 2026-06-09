@@ -68,6 +68,17 @@ func TestGitleaksRulesLoaded(t *testing.T) {
 	t.Logf("gitleaks 规则 %d 条，跳过 %d 条", rules, skipped)
 }
 
+func TestNewWithEmptyPathLoadsEmbeddedGitleaksRules(t *testing.T) {
+	f, err := New("")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rules, skipped := f.Stats()
+	if rules <= 100 {
+		t.Fatalf("New(\"\") loaded fallback rules only: rules=%d skipped=%d", rules, skipped)
+	}
+}
+
 func TestContextPassword(t *testing.T) {
 	f := newFilter(t)
 	if got := redact(t, f, "我的密码是 Hunter2xyz"); !strings.Contains(got, "[密钥]") {
@@ -291,6 +302,237 @@ func TestBuiltinFallback(t *testing.T) {
 	}
 }
 
+// --- IPv4 部分脱敏 ---
+func TestIPv4Mask(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("server at 8.8.4.4")
+	if !strings.Contains(res.Redacted, "8.*.*.4") {
+		t.Errorf("IPv4 部分脱敏失败: %q", res.Redacted)
+	}
+}
+
+func TestIPv4PrivateRangesSkipped(t *testing.T) {
+	f := newFilter(t)
+	input := "10.1.2.3 127.0.0.1 172.16.1.2 172.31.255.254 192.168.1.1 255.255.255.255"
+	res := f.Redact(input)
+	if res.Redacted != input {
+		t.Errorf("常见内网/本地 IPv4 不应脱敏: %q", res.Redacted)
+	}
+}
+
+func TestIPv4Public172OutsidePrivateRangeMasked(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("172.32.1.9")
+	if !strings.Contains(res.Redacted, "172.*.*.9") {
+		t.Errorf("172.32/12 外公网 IPv4 应脱敏: %q", res.Redacted)
+	}
+}
+
+// --- IPv6 部分脱敏 ---
+func TestIPv6Full(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("addr 2001:0db8:85a3:0000:0000:8a2e:0370:7334")
+	if !strings.Contains(res.Redacted, "2001:*::*7334") {
+		t.Errorf("IPv6 完整形式脱敏失败: %q", res.Redacted)
+	}
+}
+
+func TestIPv6Compressed(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("server at 2001:db8::1")
+	if !strings.Contains(res.Redacted, "2001:*::*1") {
+		t.Errorf("IPv6 压缩形式脱敏失败: %q", res.Redacted)
+	}
+}
+
+func TestIPv6HexOnlyMasked(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("addr cafe:babe::dead")
+	if !strings.Contains(res.Redacted, "cafe:*::*dead") {
+		t.Errorf("IPv6 无十进制数字时也应脱敏: %q", res.Redacted)
+	}
+}
+
+func TestIPv6LoopbackSkipped(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("connect to ::1")
+	if res.Hit {
+		t.Errorf("::1 loopback 不应脱敏: %q", res.Redacted)
+	}
+}
+
+func TestIPv6LinkLocalSkipped(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("fe80::1%eth0")
+	if res.Hit {
+		t.Errorf("fe80:: link-local 不应脱敏: %q", res.Redacted)
+	}
+}
+
+func TestIPv6ULASkipped(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("fd12:3456:789a::1")
+	if res.Hit {
+		t.Errorf("fd ULA 不应脱敏: %q", res.Redacted)
+	}
+}
+
+func TestIPv6InURLSkipped(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("http://[2001:db8::1]:8080/")
+	if strings.Contains(res.Redacted, "*::*") {
+		t.Errorf("URL bracket IPv6 不应脱敏: %q", res.Redacted)
+	}
+}
+
+// --- sk- API Key 部分脱敏 ---
+// --- sk- API Key 部分脱敏 ---
+func TestSKKeyMask(t *testing.T) {
+	f := newFilter(t)
+	key := "sk-proj-abc123def456ghi789jkl012"
+	res := f.Redact("key=" + key)
+	// sk- 保留，最后 2 位 "12" 保留，中间全 *
+	masked := maskSecret(key)
+	if masked == "" {
+		t.Fatalf("maskSecret 应返回非空: key=%q", key)
+	}
+	if !strings.Contains(res.Redacted, masked) {
+		t.Errorf("sk- 部分脱敏失败: got %q, 期望含 %s", res.Redacted, masked)
+	}
+}
+
+func TestSKKeyWithDash(t *testing.T) {
+	f := newFilter(t)
+	key := "sk-or-OC.-3123HNxNItR8fJVLDYTULFdIXqV"
+	res := f.Redact("Bearer " + key)
+	masked := maskSecret(key)
+	if masked == "" {
+		t.Fatalf("maskSecret 应返回非空: key=%q", key)
+	}
+	if !strings.Contains(res.Redacted, masked) {
+		t.Errorf("sk- 带 . 和 - 部分脱敏失败: got %q, 期望含 %s", res.Redacted, masked)
+	}
+}
+
+func TestGenericAPIQuestionDoesNotTriggerSecret(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("do I need an api? here is 1f2e3d4c5b6a7980")
+	if res.Hit {
+		t.Errorf("问句中的 api? 不应触发 generic-api-key: %q", res.Redacted)
+	}
+}
+
+// --- MAC 地址部分脱敏 ---
+func TestMACMask(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("ether 7e:0b:23:8c:8b:30")
+	if !strings.Contains(res.Redacted, "7e:*:*:*:*:30") {
+		t.Errorf("MAC 部分脱敏失败: %q", res.Redacted)
+	}
+}
+
+func TestMACDash(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("00-1A-2B-3C-4D-5E")
+	if !strings.Contains(res.Redacted, "00-*-*-*-*-5E") {
+		t.Errorf("MAC dash格式部分脱敏失败: %q", res.Redacted)
+	}
+}
+
+func TestMACLettersOnlyMasked(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("ether aa:bb:cc:dd:ee:ff")
+	if !strings.Contains(res.Redacted, "aa:*:*:*:*:ff") {
+		t.Errorf("MAC 无十进制数字时也应脱敏: %q", res.Redacted)
+	}
+}
+
+func TestMACDashLettersOnlyMasked(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("ether aa-bb-cc-dd-ee-ff")
+	if !strings.Contains(res.Redacted, "aa-*-*-*-*-ff") {
+		t.Errorf("MAC dash 无十进制数字时也应脱敏: %q", res.Redacted)
+	}
+}
+
+func TestNetworkBytesCountersAreNotPhoneNumbers(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("RX packets 46371003  bytes 13144912395 (13.0 GB)")
+	if strings.Contains(res.Redacted, "[电话]") {
+		t.Errorf("流量 bytes 数值不应脱敏成电话: %q", res.Redacted)
+	}
+}
+
+func TestUnspecHardwareAddressIsNotMAC(t *testing.T) {
+	f := newFilter(t)
+	line := "unspec 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  txqueuelen 500  (UNSPEC)"
+	res := f.Redact(line)
+	if res.Redacted != line {
+		t.Errorf("UNSPEC 长硬件地址不应按 MAC 分段脱敏: %q", res.Redacted)
+	}
+}
+
+// --- ifconfig 综合测试 ---
+func TestIfconfig(t *testing.T) {
+	f := newFilter(t)
+	input := `enp0s3: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 9000
+        inet 8.8.4.4  netmask 255.255.255.0  broadcast 8.8.4.255
+        inet6 2611:c04:4502:9988::1a00  prefixlen 128  scopeid 0x0<global>
+        inet6 fe80::17ff:fe00:766e  prefixlen 64  scopeid 0x20<link>
+        ether 02:10:17:09:76:66  txqueuelen 1000  (Ethernet)
+        RX packets 46371003  bytes 13000000000 (13.0 GB)`
+	res := f.Redact(input)
+	// IPv4: public address is masked, private netmask is retained.
+	if !strings.Contains(res.Redacted, "8.*.*.4") || !strings.Contains(res.Redacted, "255.255.255.0") {
+		t.Errorf("IPv4 脱敏/保留策略不符: %q", res.Redacted)
+	}
+	// IPv6 public: 2611:c04:4502:9988::1a00 → masked
+	if strings.Contains(res.Redacted, "2611:c04:4502:9988::1a00") {
+		t.Errorf("IPv6 公网地址未脱敏: %q", res.Redacted)
+	}
+	// IPv6 link-local: fe80::17ff:fe00:766e → 不脱敏
+	if !strings.Contains(res.Redacted, "fe80::17ff:fe00:766e") {
+		t.Errorf("fe80 link-local 不应脱敏: %q", res.Redacted)
+	}
+	// MAC: 02:10:17:09:76:66 → masked
+	if strings.Contains(res.Redacted, "02:10:17:09:76:66") {
+		t.Errorf("MAC 未脱敏: %q", res.Redacted)
+	}
+}
+
+// --- ifconfig IPv6 多地址测试 ---
+func TestIfconfigIPv6(t *testing.T) {
+	f := newFilter(t)
+	// 公网 IPv6 应脱敏, fe80/fd/::1 不脱敏
+	res := f.Redact("inet6 2a11:ab3c:ff09:99::1\ninet6 fe80::7424:15ff:fe78:185\ninet6 fd89:dfea:5538::1\ninet6 ::1")
+	if strings.Contains(res.Redacted, "2a11:ab3c:ff09:99::1") {
+		t.Errorf("IPv6 公网未脱敏: %q", res.Redacted)
+	}
+	if !strings.Contains(res.Redacted, "fe80::7424:15ff:fe78:185") {
+		t.Errorf("fe80 应保留: %q", res.Redacted)
+	}
+	if !strings.Contains(res.Redacted, "fd89:dfea:5538::1") {
+		t.Errorf("fd ULA 应保留: %q", res.Redacted)
+	}
+	if !strings.Contains(res.Redacted, "::1") {
+		t.Errorf("::1 loopback 应保留: %q", res.Redacted)
+	}
+}
+
+// --- IPv6 full form with real data ---
+func TestIPv6FullReal(t *testing.T) {
+	f := newFilter(t)
+	// de-ipv6 的完整 8 组地址
+	res := f.Redact("2a11:ab3c:ff09:99:ff65:ff49:ff64:2")
+	if strings.Contains(res.Redacted, "2a11:ab3c:ff09:99:ff65:ff49:ff64:2") {
+		t.Errorf("IPv6 完整地址未脱敏: %q", res.Redacted)
+	}
+	masked := maskIPv6("2a11:ab3c:ff09:99:ff65:ff49:ff64:2")
+	if !strings.Contains(res.Redacted, masked) {
+		t.Errorf("IPv6 脱敏格式不符: got %q, 期望含 %s", res.Redacted, masked)
+	}
+}
+
 // BenchmarkRedact 测不同文本长度下的脱敏耗时。
 func BenchmarkRedact(b *testing.B) {
 	f, err := NewFromBytes(GitleaksRules)
@@ -298,7 +540,7 @@ func BenchmarkRedact(b *testing.B) {
 		b.Fatal(err)
 	}
 	unit := "我叫张伟，邮箱 a@b.com，密码是 Hunter2xy，卡号 4111111111111111。"
-	for _, size := range []int{50, 2000, 32000} {
+	for _, size := range []int{50, 2000, 32000, 256 * 1024, 1024 * 1024} {
 		text := strings.Repeat(unit, size/len(unit)+1)[:size]
 		b.Run(fmt.Sprintf("%dB", len(text)), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
@@ -306,4 +548,120 @@ func BenchmarkRedact(b *testing.B) {
 			}
 		})
 	}
+}
+
+func BenchmarkRedactComponents(b *testing.B) {
+	full, err := NewFromBytes(GitleaksRules)
+	if err != nil {
+		b.Fatal(err)
+	}
+	builtin, err := NewFromBytes(nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	unit := "我叫张伟，邮箱 alice@example.com，密码是 sk-testabcdefghijklmnopqrstuvwxyz12，卡号 4532015112830366。"
+	text := strings.Repeat(unit, 1024*1024/len(unit)+1)[:1024*1024]
+	b.Run("pii-only-1MiB", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = detectPII(text)
+		}
+	})
+	b.Run("builtin-secret-1MiB", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = builtin.secrets.detect(text)
+		}
+	})
+	b.Run("gitleaks-secret-1MiB", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = full.secrets.detect(text)
+		}
+	})
+}
+
+func BenchmarkPIIRules1MiB(b *testing.B) {
+	unit := "我叫张伟，邮箱 alice@example.com，密码是 sk-testabcdefghijklmnopqrstuvwxyz12，卡号 4532015112830366。"
+	text := strings.Repeat(unit, 1024*1024/len(unit)+1)[:1024*1024]
+	b.Run("email", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = reEmail.FindAllStringIndex(text, -1)
+		}
+	})
+	b.Run("phone", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = rePhoneCN.FindAllStringIndex(text, -1)
+		}
+	})
+	b.Run("idcard", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = reIDCard.FindAllStringIndex(text, -1)
+		}
+	})
+	b.Run("ipv4", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = reIPv4.FindAllStringIndex(text, -1)
+		}
+	})
+	b.Run("ipv6", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = reIPv6.FindAllStringIndex(text, -1)
+		}
+	})
+	b.Run("mac", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = reMAC.FindAllStringIndex(text, -1)
+		}
+	})
+	b.Run("bank", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = reBankCard.FindAllStringIndex(text, -1)
+		}
+	})
+}
+
+func BenchmarkRedactSparseText(b *testing.B) {
+	f, err := NewFromBytes(GitleaksRules)
+	if err != nil {
+		b.Fatal(err)
+	}
+	unit := "普通日志行 status ok request completed without credentials or personal data.\n"
+	for _, size := range []int{256 * 1024, 1024 * 1024} {
+		text := strings.Repeat(unit, size/len(unit)+1)[:size]
+		b.Run(fmt.Sprintf("%dB", len(text)), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				f.Redact(text)
+			}
+		})
+	}
+}
+
+func BenchmarkSecretSparseBreakdown(b *testing.B) {
+	f, err := NewFromBytes(GitleaksRules)
+	if err != nil {
+		b.Fatal(err)
+	}
+	unit := "普通日志行 status ok request completed without credentials or personal data.\n"
+	text := strings.Repeat(unit, 1024*1024/len(unit)+1)[:1024*1024]
+	b.Run("lower", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = lowerForSearch(text)
+		}
+	})
+	b.Run("rule-prefilter", func(b *testing.B) {
+		low := lowerForSearch(text)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			count := 0
+			for j := range f.secrets.rules {
+				if ruleApplies(&f.secrets.rules[j], low) {
+					count++
+				}
+			}
+			_ = count
+		}
+	})
+	b.Run("detect", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = f.secrets.detect(text)
+		}
+	})
 }

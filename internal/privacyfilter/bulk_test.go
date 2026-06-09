@@ -299,8 +299,8 @@ func genPII() []bulkCase {
 		out = append(out, bulkCase{"pii-bank", "raw", c, true})
 		out = append(out, bulkCase{"pii-bank", "prose", "付款卡号 " + c, true})
 	}
-	// IPv4
-	ips := []string{"192.168.1.1", "10.0.0.1", "172.16.0.1", "8.8.8.8", "127.0.0.1", "255.255.255.0"}
+	// IPv4: public addresses are PII; common private/local ranges are covered as non-hit unit tests.
+	ips := []string{"8.8.4.4", "1.1.1.1", "9.9.9.9", "23.45.67.89", "100.64.0.1", "172.32.1.9"}
 	for _, ip := range ips {
 		out = append(out, bulkCase{"pii-ip", "raw", ip, true})
 		out = append(out, bulkCase{"pii-ip", "prose", "服务器 IP " + ip + " 已部署", true})
@@ -785,8 +785,8 @@ func genLogLines() []bulkCase {
 		line string
 		hit  bool
 	}{
-		{`192.168.1.42 - - [28/May/2026:14:32:01 +0800] "GET / HTTP/1.1" 200 1234 "-" "Mozilla/5.0"`, true},
-		{`10.0.0.15 - - [28/May/2026:14:32:01 +0800] "POST /api/login HTTP/1.1" 200 100`, true},
+		{`8.8.4.4 - - [28/May/2026:14:32:01 +0800] "GET / HTTP/1.1" 200 1234 "-" "Mozilla/5.0"`, true},
+		{`1.1.1.1 - - [28/May/2026:14:32:01 +0800] "POST /api/login HTTP/1.1" 200 100`, true},
 	}
 	for _, l := range nginxLogs {
 		out = append(out, bulkCase{"log-nginx", "nginx line", l.line, l.hit})
@@ -857,10 +857,10 @@ func genCommandLines() []bulkCase {
 func genIPVariations() []bulkCase {
 	var out []bulkCase
 	v4hit := []string{
-		"192.168.1.1", "10.0.0.1", "172.16.0.1", "8.8.8.8",
-		"1.1.1.1", "127.0.0.1", "255.255.255.0",
-		"client 192.168.1.42 connected",
-		"src=10.0.0.15 dst=10.0.0.16",
+		"8.8.4.4", "1.1.1.1", "9.9.9.9", "23.45.67.89",
+		"100.64.0.1", "172.32.1.9", "203.0.113.10",
+		"client 8.8.4.4 connected",
+		"src=1.1.1.1 dst=9.9.9.9",
 	}
 	for _, ip := range v4hit {
 		out = append(out, bulkCase{"ip-v4", "v4", ip, true})
@@ -868,24 +868,29 @@ func genIPVariations() []bulkCase {
 	// 不是 IP 的串
 	notIP := []string{
 		"1.2.3", "1.2.3.4.5", "256.1.1.1", "999.999.999.999",
-		"version 1.2.3.4 released",
+		"version 8.8.4.4 released",
 	}
 	for _, s := range notIP {
-		// 这些里面有的真的是 IP 在中间，比如 "version 1.2.3.4 released" 其实含 1.2.3.4
-		// 1.2.3.4 是合法 IP
-		expectHit := s == "version 1.2.3.4 released"
+		// These are malformed/non-PII except the explicit public IPv4 sentence.
+		expectHit := s == "version 8.8.4.4 released"
 		out = append(out, bulkCase{"ip-edge", "edge", s, expectHit})
 	}
-	// IPv6 (当前未实现 IPv6 → 期望不脱)
-	v6 := []string{
-		"2001:db8::1", "fe80::1", "::1", "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+	// IPv6 — 公网地址期望脱敏，本地地址期望不脱
+	v6public := []string{
+		"2001:db8::1", "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
 	}
-	for _, ip := range v6 {
-		out = append(out, bulkCase{"ip-v6", "v6 (unsupported)", ip, false})
+	for _, ip := range v6public {
+		out = append(out, bulkCase{"ip-v6", "v6 public", ip, true})
+	}
+	v6local := []string{
+		"::1", "fe80::1", "fd12:3456:789a::1", "::",
+	}
+	for _, ip := range v6local {
+		out = append(out, bulkCase{"ip-v6-local", "v6 local", ip, false})
 	}
 	// IP + port
-	out = append(out, bulkCase{"ip-port", "v4 port", "10.0.0.1:8080", true})
-	out = append(out, bulkCase{"ip-port", "v4 port host", "host=10.0.0.1:5432", true})
+	out = append(out, bulkCase{"ip-port", "v4 port", "8.8.4.4:8080", true})
+	out = append(out, bulkCase{"ip-port", "v4 port host", "host=1.1.1.1:5432", true})
 	return out
 }
 

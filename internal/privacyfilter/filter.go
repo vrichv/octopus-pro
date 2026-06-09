@@ -36,7 +36,7 @@ type Filter struct {
 }
 
 // New creates a Filter from a gitleaks rules file path.
-// Passing an empty path uses built-in fallback rules. Existing but invalid files return an error.
+// Passing an empty path uses embedded gitleaks rules. Existing but invalid files return an error.
 func New(gitleaksTOML string) (*Filter, error) {
 	sd, err := newSecretDetectorFromFile(gitleaksTOML)
 	if err != nil {

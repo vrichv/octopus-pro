@@ -20,7 +20,7 @@ var reContextSecret = regexp.MustCompile(
 	`(?i)(密码|口令|密钥|password|passwd|pwd|secret|token|api[_\s-]?key)\s*(?:是|为|:|：|=)\s*['"]?([^\s'"，。；;]{4,})`)
 
 // 高熵兜底：抓不匹配任何已知格式的随机串。
-var reEntropyToken = regexp.MustCompile(`[A-Za-z0-9+/=_\-]{20,}`)
+var reEntropyToken = regexp.MustCompile(`[A-Za-z0-9._/+=-]{20,}`)
 
 // 密钥语义关键词。命中表示候选串身处"明显在谈密钥"的上下文里，
 // 保留 entropyMin；不命中则用 entropyMinStrict 收紧阈值。
@@ -116,9 +116,16 @@ type secretRule struct {
 	secretGroup int
 }
 
+type keywordRules struct {
+	keyword string
+	rules   []int
+}
+
 type secretDetector struct {
-	rules   []secretRule
-	skipped int // 因正则语法不兼容被跳过的规则数（Go RE2 下通常为 0）
+	rules          []secretRule
+	keywordRules   []keywordRules
+	alwaysRuleIdxs []int
+	skipped        int // 因正则语法不兼容被跳过的规则数（Go RE2 下通常为 0）
 }
 
 // gitleaks.toml 的最小结构；未知字段（allowlist 等）会被忽略。
@@ -134,7 +141,7 @@ type tomlConfig struct {
 
 func newSecretDetectorFromFile(tomlPath string) (*secretDetector, error) {
 	if tomlPath == "" {
-		return newSecretDetectorFromBytes(nil)
+		return newSecretDetectorFromBytes(GitleaksRules)
 	}
 	raw, err := os.ReadFile(tomlPath)
 	if err != nil {
@@ -147,6 +154,7 @@ func newSecretDetectorFromBytes(tomlBytes []byte) (*secretDetector, error) {
 	sd := &secretDetector{}
 	if len(tomlBytes) == 0 {
 		sd.loadBuiltin()
+		sd.buildKeywordIndex()
 		return sd, nil
 	}
 	var cfg tomlConfig
@@ -171,6 +179,7 @@ func newSecretDetectorFromBytes(tomlBytes []byte) (*secretDetector, error) {
 	if len(sd.rules) == 0 {
 		sd.loadBuiltin()
 	}
+	sd.buildKeywordIndex()
 	return sd, nil
 }
 
@@ -180,7 +189,7 @@ func (sd *secretDetector) loadBuiltin() {
 		id, pat string
 		kws     []string
 	}{
-		{"openai-key", `sk-(?:proj-)?[A-Za-z0-9_-]{20,}`, []string{"sk-"}},
+		{"openai-key", `sk-(?:proj-)?[A-Za-z0-9_-]{8,}`, []string{"sk-"}},
 		{"aws-access-key", `AKIA[0-9A-Z]{16}`, []string{"akia"}},
 		{"github-token", `gh[pousr]_[A-Za-z0-9]{36,}`, []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_"}},
 		{"google-api-key", `AIza[0-9A-Za-z_-]{35}`, []string{"aiza"}},
@@ -193,16 +202,122 @@ func (sd *secretDetector) loadBuiltin() {
 	}
 }
 
+func (sd *secretDetector) buildKeywordIndex() {
+	sd.keywordRules = nil
+	sd.alwaysRuleIdxs = nil
+	byKeyword := make(map[string][]int)
+	for i := range sd.rules {
+		if len(sd.rules[i].keywords) == 0 {
+			sd.alwaysRuleIdxs = append(sd.alwaysRuleIdxs, i)
+			continue
+		}
+		for _, kw := range sd.rules[i].keywords {
+			byKeyword[kw] = append(byKeyword[kw], i)
+		}
+	}
+	sd.keywordRules = make([]keywordRules, 0, len(byKeyword))
+	for kw, idxs := range byKeyword {
+		sd.keywordRules = append(sd.keywordRules, keywordRules{keyword: kw, rules: idxs})
+	}
+}
+
+func (sd *secretDetector) forEachApplicableRule(lowText string, fn func(*secretRule)) {
+	if len(sd.keywordRules) == 0 {
+		for i := range sd.rules {
+			fn(&sd.rules[i])
+		}
+		return
+	}
+	seen := make([]bool, len(sd.rules))
+	for _, i := range sd.alwaysRuleIdxs {
+		seen[i] = true
+		fn(&sd.rules[i])
+	}
+	for _, entry := range sd.keywordRules {
+		if !strings.Contains(lowText, entry.keyword) {
+			continue
+		}
+		for _, i := range entry.rules {
+			if seen[i] {
+				continue
+			}
+			seen[i] = true
+			fn(&sd.rules[i])
+		}
+	}
+}
+
+func ruleHasAssignmentContext(r *secretRule, lowText string) bool {
+	if r.id != "generic-api-key" {
+		return true
+	}
+	for _, kw := range r.keywords {
+		searchFrom := 0
+		for {
+			pos := strings.Index(lowText[searchFrom:], kw)
+			if pos < 0 {
+				break
+			}
+			end := searchFrom + pos + len(kw)
+			limit := end + 32
+			if limit > len(lowText) {
+				limit = len(lowText)
+			}
+			if strings.IndexAny(lowText[end:limit], "=:") >= 0 {
+				return true
+			}
+			searchFrom = end
+		}
+	}
+	return false
+}
+
+// maskSecret 对特殊前缀的密钥做部分脱敏。
+// 在 cand 中查找 sk- 子串，保留 sk- 和最后 2 位，中间用 * 替代。
+// cand 可能包含赋值上下文（key=sk-...）或边界字符，需剥离。
+// 其他：返回 ""（调用方使用默认 [密钥]）。
+func maskSecret(s string) string {
+	idx := strings.Index(s, "sk-")
+	if idx < 0 {
+		return ""
+	}
+	// 从 sk- 位置提取纯密钥部分，只保留 [A-Za-z0-9_-]
+	secretStart := idx + 3
+	secretEnd := secretStart
+	for secretEnd < len(s) && isKeyChar(s[secretEnd]) {
+		secretEnd++
+	}
+	secretLen := secretEnd - secretStart
+	if secretLen < 8 {
+		return ""
+	}
+	secret := s[secretStart:secretEnd]
+	return "sk-" + strings.Repeat("*", secretLen-2) + secret[len(secret)-2:]
+}
+
+func isKeyChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9') || b == '-' || b == '_' || b == '.'
+}
+
+func lowerForSearch(text string) string {
+	for i := 0; i < len(text); i++ {
+		if text[i] >= 'A' && text[i] <= 'Z' {
+			return strings.ToLower(text)
+		}
+	}
+	return text
+}
+
 // detect 返回密钥/凭证的命中区间。
 func (sd *secretDetector) detect(text string) []span {
 	var spans []span
-	low := strings.ToLower(text)
+	low := lowerForSearch(text)
 
 	// gitleaks 规则：关键词预筛 —— 只对命中关键词的规则跑正则
-	for i := range sd.rules {
-		r := &sd.rules[i]
-		if !ruleApplies(r, low) {
-			continue
+	sd.forEachApplicableRule(low, func(r *secretRule) {
+		if !ruleHasAssignmentContext(r, low) {
+			return
 		}
 		for _, m := range r.re.FindAllStringSubmatchIndex(text, -1) {
 			s, e := m[0], m[1]
@@ -221,14 +336,18 @@ func (sd *secretDetector) detect(text string) []span {
 			// （含 base64 的 / 字符）这类合法但带斜杠的密钥。
 			cand := text[s:e]
 			if looksLikeURLMatch(cand) ||
-				isTemplateVar(cand) || isHexHash(cand) || isUUID(cand) ||
+				isTemplateVar(cand) || isHexHash(cand) || isUUID(cand) || isMACAddress(cand) ||
 				isBusinessIDAssignment(cand) ||
 				isLikelyPlaceholder(cand) || hasJSONNoise(cand) {
 				continue
 			}
-			spans = append(spans, span{s, e, "[密钥]"})
+			label := maskSecret(cand)
+			if label == "" {
+				label = "[密钥]"
+			}
+			spans = append(spans, span{s, e, label})
 		}
-	}
+	})
 	// 上下文口令：只脱掉 value（第 2 个分组）
 	for _, m := range reContextSecret.FindAllStringSubmatchIndex(text, -1) {
 		if len(m) >= 6 && m[4] >= 0 {
@@ -241,7 +360,11 @@ func (sd *secretDetector) detect(text string) []span {
 			if len(value) <= 16 && shannonEntropy(value) < 3.0 {
 				continue
 			}
-			spans = append(spans, span{m[4], m[5], "[密钥]"})
+			label := maskSecret(value)
+			if label == "" {
+				label = "[密钥]"
+			}
+			spans = append(spans, span{m[4], m[5], label})
 		}
 	}
 	// 高熵兜底
@@ -254,8 +377,8 @@ func (sd *secretDetector) detect(text string) []span {
 		if !strong && isOnPathOrURLBoundary(text, s, e) {
 			continue
 		}
-		// 形态识别：模板变量 / 标准 hash / UUID / 业务 ID 都不是密钥
-		if isTemplateVar(cand) || isHexHash(cand) || isUUID(cand) || isBusinessIDAssignment(cand) {
+		// 形态识别：模板变量 / 标准 hash / UUID / MAC / 业务 ID 都不是密钥。
+		if isTemplateVar(cand) || isHexHash(cand) || isUUID(cand) || isMACAddress(cand) || isBusinessIDAssignment(cand) {
 			continue
 		}
 		threshold := entropyMin
@@ -263,7 +386,11 @@ func (sd *secretDetector) detect(text string) []span {
 			threshold = entropyMinStrict
 		}
 		if shannonEntropy(cand) >= threshold {
-			spans = append(spans, span{s, e, "[密钥]"})
+			label := maskSecret(cand)
+			if label == "" {
+				label = "[密钥]"
+			}
+			spans = append(spans, span{s, e, label})
 		}
 	}
 	return spans
@@ -324,9 +451,10 @@ func hasStrongSecretContext(text string, start, end int) bool {
 	}
 	last := locs[len(locs)-1]
 	candStartInRegion := start - lo
-	// 关键词起点 >= 候选起点 → 关键词本身就在候选串里（如 token=xxx 整段都匹配）→ 强
+	// 关键词起点 >= 候选起点：只有 token=xxx 这类候选串内自带赋值符时才算强；
+	// api_key.example.com/xxx 这种域名段不能绕过路径检查。
 	if last[0] >= candStartInRegion {
-		return true
+		return strings.IndexByte(text[start:end], '=') >= 0
 	}
 	// 关键词在 lookback 里：检查关键词结束 → 候选起点 之间是否只剩赋值字符
 	between := region[last[1]:candStartInRegion]
@@ -345,6 +473,28 @@ func isTemplateVar(s string) bool { return reTemplateVar.MatchString(s) }
 func isHexHash(s string) bool {
 	n := len(s)
 	return (n == 32 || n == 40 || n == 64) && reHexOnly.MatchString(s)
+}
+
+func isMACAddress(s string) bool {
+	if len(s) != 17 {
+		return false
+	}
+	sep := s[2]
+	if sep != ':' && sep != '-' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if i == 2 || i == 5 || i == 8 || i == 11 || i == 14 {
+			if s[i] != sep {
+				return false
+			}
+			continue
+		}
+		if !((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f') || (s[i] >= 'A' && s[i] <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // isUUID 识别标准 8-4-4-4-12 UUID。
