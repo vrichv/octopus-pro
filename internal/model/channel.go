@@ -44,7 +44,7 @@ type Channel struct {
 	Stats          *StatsChannel  `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
 	MatchRegex     *string        `json:"match_regex"`
 	RateLimit      string         `json:"rate_limit" gorm:"default:''"`       // key 级默认限流，如 "100/1h"
-	ModelRateLimit string         `json:"model_rate_limit" gorm:"default:''"` // model 级限流，如 "gpt-4:2/1m,claude-3:10/1h"
+	ModelRateLimit string         `json:"model_rate_limit" gorm:"default:''"` // model 级限流，如 "gpt-4=2/1m,claude-3=10/1h"
 	KeyMode        int            `json:"key_mode" gorm:"default:0"`          // 0=Cost, 1=RoundRobin
 }
 
@@ -154,9 +154,6 @@ func (c *Channel) GetChannelKey() ChannelKey {
 		if k.ConsecutiveAuthErrors > 0 && k.LastAuthErrorTime > 0 && nowSec-k.LastAuthErrorTime >= 300 {
 			k.ConsecutiveAuthErrors = 0
 			k.LastAuthErrorTime = 0
-			if !k.Enabled {
-				k.Enabled = true
-			}
 		}
 		if !k.Enabled {
 			continue

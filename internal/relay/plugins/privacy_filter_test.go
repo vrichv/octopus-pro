@@ -83,6 +83,20 @@ func TestPrivacyFilterMiddlewareInitErrorIsNoop(t *testing.T) {
 	}
 }
 
+func TestPrivacyFilterMiddlewareEmptyMessagesIsNoop(t *testing.T) {
+	filter := newTestPrivacyFilter(t)
+	request := &llm.Request{}
+
+	middleware := newPrivacyFilter(func() bool { return true }, func() (*privacyfilter.Filter, error) { return filter, nil })
+	got, err := middleware.OnInboundLlmRequest(context.Background(), request)
+	if err != nil {
+		t.Fatalf("OnInboundLlmRequest: %v", err)
+	}
+	if got != request {
+		t.Fatal("empty request should be returned unchanged")
+	}
+}
+
 func newTestPrivacyFilter(t *testing.T) *privacyfilter.Filter {
 	t.Helper()
 	filter, err := privacyfilter.NewFromBytes(privacyfilter.GitleaksRules)

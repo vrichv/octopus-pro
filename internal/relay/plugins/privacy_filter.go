@@ -41,7 +41,7 @@ func NewPrivacyFilter() pipeline.Middleware {
 
 func newPrivacyFilter(enabled func() bool, getFilter func() (*privacyfilter.Filter, error)) pipeline.Middleware {
 	return pipeline.OnLlmRequest("privacy_filter", func(_ context.Context, request *llm.Request) (*llm.Request, error) {
-		if request == nil || !enabled() || len(request.Messages) == 0 {
+		if request == nil || !enabled() {
 			return request, nil
 		}
 		filter, err := getFilter()

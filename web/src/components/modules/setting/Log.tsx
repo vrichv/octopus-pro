@@ -118,11 +118,11 @@ export function SettingLog() {
         setIsExporting(true);
         exportAnalysis.mutate(hours, {
             onSuccess: (data) => {
-                toast.success(`日志分析已导出: ${data.file}，共 ${data.records} 条记录`);
+				toast.success(t('log.export.success', { file: data.file, records: data.records }));
                 setIsExporting(false);
             },
             onError: () => {
-                toast.error('日志分析导出失败');
+				toast.error(t('log.export.failed'));
                 setIsExporting(false);
             }
         });
@@ -179,34 +179,34 @@ export function SettingLog() {
 
             {experimentalEnabled && (
             <>
-            {/* 导出日志分析 */}
-            <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                    <Download className="h-5 w-5 text-muted-foreground" />
-                    <span className="text-sm font-medium">导出日志分析</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Input
-                        type="number"
-                        min={1}
-                        max={96}
-                        value={analysisHours}
-                        onChange={(e) => setAnalysisHours(e.target.value)}
-                        className="w-24 rounded-xl"
-                        disabled={isExporting}
-                    />
-                    <span className="text-sm text-muted-foreground">小时</span>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleExportAnalysis}
-                        disabled={isExporting}
-                        className="rounded-xl"
-                    >
-                        {isExporting ? '导出中...' : '导出分析'}
-                    </Button>
-                </div>
-            </div>
+				{/* 导出日志分析 */}
+				<div className="flex items-center justify-between gap-4">
+					<div className="flex items-center gap-3">
+						<Download className="h-5 w-5 text-muted-foreground" />
+						<span className="text-sm font-medium">{t('log.export.label')}</span>
+					</div>
+					<div className="flex items-center gap-2">
+						<Input
+							type="number"
+							min={1}
+							max={96}
+							value={analysisHours}
+							onChange={(e) => setAnalysisHours(e.target.value)}
+							className="w-24 rounded-xl"
+							disabled={isExporting}
+						/>
+						<span className="text-sm text-muted-foreground">{t('log.export.hours')}</span>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={handleExportAnalysis}
+							disabled={isExporting}
+							className="rounded-xl"
+						>
+							{isExporting ? t('log.export.exporting') : t('log.export.button')}
+						</Button>
+					</div>
+				</div>
             </>
             )}
 

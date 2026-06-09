@@ -344,8 +344,16 @@
                 "button": "清空",
                 "clearing": "清空中..."
             },
-            "clearSuccess": "日志已清空",
-            "clearFailed": "清空失败"
+			"clearSuccess": "日志已清空",
+			"clearFailed": "清空失败",
+			"export": {
+				"label": "导出日志分析",
+				"hours": "小时",
+				"button": "导出分析",
+				"exporting": "导出中...",
+				"success": "日志分析已导出: {file}，共 {records} 条记录",
+				"failed": "日志分析导出失败"
+			}
         }
     },
     "group": {

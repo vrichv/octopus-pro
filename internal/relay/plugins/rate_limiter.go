@@ -38,36 +38,41 @@ func ParseRateSpec(spec string) (count int, interval time.Duration, err error) {
 	}
 
 	unit := strings.TrimSpace(parts[1])
+	var unitCount int
 	switch {
 	case strings.HasSuffix(unit, "s"):
-		interval = time.Duration(parseNum(unit, "s")) * time.Second
+		unitCount, err = parseNum(unit, "s")
+		interval = time.Duration(unitCount) * time.Second
 	case strings.HasSuffix(unit, "m"):
-		interval = time.Duration(parseNum(unit, "m")) * time.Minute
+		unitCount, err = parseNum(unit, "m")
+		interval = time.Duration(unitCount) * time.Minute
 	case strings.HasSuffix(unit, "h"):
-		interval = time.Duration(parseNum(unit, "h")) * time.Hour
+		unitCount, err = parseNum(unit, "h")
+		interval = time.Duration(unitCount) * time.Hour
 	case strings.HasSuffix(unit, "d"):
-		interval = time.Duration(parseNum(unit, "d")) * 24 * time.Hour
+		unitCount, err = parseNum(unit, "d")
+		interval = time.Duration(unitCount) * 24 * time.Hour
 	default:
 		return 0, 0, fmt.Errorf("unknown time unit: %q (expected s/m/h/d)", unit)
 	}
 
-	if interval <= 0 {
+	if err != nil || interval <= 0 {
 		return 0, 0, fmt.Errorf("invalid interval: %q", parts[1])
 	}
 
 	return count, interval, nil
 }
 
-func parseNum(s, suffix string) int {
+func parseNum(s, suffix string) (int, error) {
 	s = strings.TrimSuffix(s, suffix)
 	if s == "" {
-		return 1
+		return 1, nil
 	}
-	n, _ := strconv.Atoi(s)
-	if n <= 0 {
-		return 1
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid interval value: %q", s)
 	}
-	return n
+	return n, nil
 }
 
 // ParseModelRateLimit 解析 model 级限流配置。

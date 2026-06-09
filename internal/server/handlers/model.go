@@ -4,14 +4,14 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 	"github.com/vrichv/octopus-pro/internal/model"
 	"github.com/vrichv/octopus-pro/internal/op"
 	"github.com/vrichv/octopus-pro/internal/price"
 	"github.com/vrichv/octopus-pro/internal/server/middleware"
 	"github.com/vrichv/octopus-pro/internal/server/resp"
 	"github.com/vrichv/octopus-pro/internal/server/router"
-	"github.com/gin-gonic/gin"
-	"github.com/samber/lo"
 )
 
 func init() {
@@ -76,7 +76,6 @@ func getModelList(c *gin.Context) {
 		if len(effective) > 0 {
 			models = effective
 		}
-		// 交集为空 → 所有指定模型均已失效，视为无限制
 	}
 
 	if c.GetString("request_type") == "anthropic" {

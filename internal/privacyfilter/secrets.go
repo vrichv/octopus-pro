@@ -198,7 +198,7 @@ func (sd *secretDetector) loadBuiltin() {
 		{"private-key", `-----BEGIN[A-Z ]*PRIVATE KEY-----`, []string{"private key"}},
 	}
 	for _, b := range builtin {
-		sd.rules = append(sd.rules, secretRule{b.id, regexp.MustCompile(b.pat), b.kws, 0, 0})
+		sd.rules = append(sd.rules, secretRule{id: b.id, re: regexp.MustCompile(b.pat), keywords: b.kws})
 	}
 }
 

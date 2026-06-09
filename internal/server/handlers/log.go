@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/vrichv/octopus-pro/internal/model"
 	"github.com/vrichv/octopus-pro/internal/op"
 	"github.com/vrichv/octopus-pro/internal/server/middleware"
 	"github.com/vrichv/octopus-pro/internal/server/resp"
 	"github.com/vrichv/octopus-pro/internal/server/router"
-	"github.com/gin-gonic/gin"
 )
 
 func init() {
@@ -138,26 +138,26 @@ func streamLog(c *gin.Context) {
 
 // exportLogEntry is a simplified log entry for AI analysis export.
 type exportLogEntry struct {
-	Time        int64                   `json:"time"`
-	ChannelID   int                     `json:"channel_id"`
-	ChannelName string                  `json:"channel_name"`
-	Model       string                  `json:"model"`
-	UseTime     int                     `json:"use_time"`
-	Ftut        int                     `json:"ftut"`
-	Success     bool                    `json:"success"`
-	Error       string                  `json:"error"`
-	Attempts    []model.ChannelAttempt  `json:"attempts"`
+	Time        int64                  `json:"time"`
+	ChannelID   int                    `json:"channel_id"`
+	ChannelName string                 `json:"channel_name"`
+	Model       string                 `json:"model"`
+	UseTime     int                    `json:"use_time"`
+	Ftut        int                    `json:"ftut"`
+	Success     bool                   `json:"success"`
+	Error       string                 `json:"error"`
+	Attempts    []model.ChannelAttempt `json:"attempts"`
 }
 
 type exportChannelSummary struct {
-	ChannelID   int            `json:"channel_id"`
-	ChannelName string         `json:"channel_name"`
-	Total       int            `json:"total"`
-	Success     int            `json:"success"`
-	Failed      int            `json:"failed"`
-	Count429    int            `json:"429_count"`
-	AvgUseTime  int            `json:"avg_use_time_ms"`
-	Hourly429   map[int]int    `json:"429_hourly"`
+	ChannelID   int         `json:"channel_id"`
+	ChannelName string      `json:"channel_name"`
+	Total       int         `json:"total"`
+	Success     int         `json:"success"`
+	Failed      int         `json:"failed"`
+	Count429    int         `json:"429_count"`
+	AvgUseTime  int         `json:"avg_use_time_ms"`
+	Hourly429   map[int]int `json:"429_hourly"`
 }
 
 type exportModelSummary struct {
@@ -168,18 +168,18 @@ type exportModelSummary struct {
 }
 
 type exportPayload struct {
-	ExportedAt   string                `json:"exported_at"`
+	ExportedAt   string                     `json:"exported_at"`
 	TimeRange    struct{ Start, End int64 } `json:"time_range"`
-	TotalRecords int                   `json:"total_records"`
+	TotalRecords int                        `json:"total_records"`
 	Summary      struct {
-		TotalRequests     int                     `json:"total_requests"`
-		Success           int                     `json:"success"`
-		Failed            int                     `json:"failed"`
-		Count429          int                     `json:"429_count"`
-		CircuitBreakCount int                     `json:"circuit_break_count"`
-		TimeoutCount      int                     `json:"timeout_count"`
-		Channels          []exportChannelSummary  `json:"channels"`
-		Models            []exportModelSummary    `json:"models"`
+		TotalRequests     int                    `json:"total_requests"`
+		Success           int                    `json:"success"`
+		Failed            int                    `json:"failed"`
+		Count429          int                    `json:"429_count"`
+		CircuitBreakCount int                    `json:"circuit_break_count"`
+		TimeoutCount      int                    `json:"timeout_count"`
+		Channels          []exportChannelSummary `json:"channels"`
+		Models            []exportModelSummary   `json:"models"`
 	} `json:"summary"`
 	Records []exportLogEntry `json:"records"`
 }
@@ -228,10 +228,10 @@ func exportAnalysis(c *gin.Context) {
 
 func buildExportPayload(logs []model.RelayLog, startTime, endTime int64, now time.Time) exportPayload {
 	payload := exportPayload{
-		ExportedAt: now.Format(time.RFC3339),
-		TimeRange: struct{ Start, End int64 }{Start: startTime, End: endTime},
+		ExportedAt:   now.Format(time.RFC3339),
+		TimeRange:    struct{ Start, End int64 }{Start: startTime, End: endTime},
 		TotalRecords: len(logs),
-		Records: make([]exportLogEntry, 0, len(logs)),
+		Records:      make([]exportLogEntry, 0, len(logs)),
 	}
 
 	// Channel aggregates

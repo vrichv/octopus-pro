@@ -3,11 +3,11 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/vrichv/octopus-pro/internal/op"
 	"github.com/vrichv/octopus-pro/internal/server/middleware"
 	"github.com/vrichv/octopus-pro/internal/server/resp"
 	"github.com/vrichv/octopus-pro/internal/server/router"
-	"github.com/gin-gonic/gin"
 )
 
 func init() {

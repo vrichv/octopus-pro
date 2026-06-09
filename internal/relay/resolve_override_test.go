@@ -78,3 +78,51 @@ func TestResolveModelOverride_NilModel(t *testing.T) {
 		t.Fatal("expected non-nil for old format with nil model")
 	}
 }
+
+func TestModelAllowedByAPIKey(t *testing.T) {
+	tests := []struct {
+		name            string
+		supportedModels string
+		availableModels []string
+		requestedModel  string
+		want            bool
+	}{
+		{
+			name:            "empty supported models allows all",
+			supportedModels: "",
+			availableModels: []string{"test"},
+			requestedModel:  "gpt-5.5",
+			want:            true,
+		},
+		{
+			name:            "empty intersection keeps legacy unrestricted behavior",
+			supportedModels: "test,glm-5",
+			availableModels: []string{"deepseek-v4-flash"},
+			requestedModel:  "gpt-5.5",
+			want:            true,
+		},
+		{
+			name:            "effective list allows matching request",
+			supportedModels: "test,glm-5",
+			availableModels: []string{"test", "glm-5"},
+			requestedModel:  "glm-5",
+			want:            true,
+		},
+		{
+			name:            "effective list rejects non matching request",
+			supportedModels: "test,glm-5",
+			availableModels: []string{"test", "glm-5"},
+			requestedModel:  "gpt-5.5",
+			want:            false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := modelAllowedByAPIKey(test.supportedModels, test.availableModels, test.requestedModel)
+			if got != test.want {
+				t.Fatalf("modelAllowedByAPIKey() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}

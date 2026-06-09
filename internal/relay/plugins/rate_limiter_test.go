@@ -30,6 +30,7 @@ func TestParseRateSpec(t *testing.T) {
 		{"100/", 0, 0, true},
 		{"", 0, 0, true},
 		{"100/1x", 0, 0, true},
+		{"100/xm", 0, 0, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {

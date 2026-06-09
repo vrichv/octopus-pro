@@ -1,16 +1,17 @@
 package handlers
 
 import (
-	"net/http"
-	"strconv"
-
+	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
 	"github.com/vrichv/octopus-pro/internal/model"
 	"github.com/vrichv/octopus-pro/internal/op"
 	"github.com/vrichv/octopus-pro/internal/server/auth"
 	"github.com/vrichv/octopus-pro/internal/server/middleware"
 	"github.com/vrichv/octopus-pro/internal/server/resp"
 	"github.com/vrichv/octopus-pro/internal/server/router"
-	"github.com/gin-gonic/gin"
+	"net/http"
+	"strconv"
+	"strings"
 )
 
 func init() {
@@ -102,6 +103,22 @@ func getStatsAPIKeyById(c *gin.Context) {
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
+	}
+	models, err := op.GroupListModel(c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if info.SupportedModels == "" {
+		info.SupportedModels = strings.Join(models, ", ")
+	} else {
+		supportedModels := lo.Map(strings.Split(info.SupportedModels, ","), func(s string, _ int) string {
+			return strings.TrimSpace(s)
+		})
+		models = lo.Filter(models, func(m string, _ int) bool {
+			return lo.Contains(supportedModels, m)
+		})
+		info.SupportedModels = strings.Join(models, ", ")
 	}
 	resp.Success(c, map[string]any{
 		"stats": stats,

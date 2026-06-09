@@ -344,8 +344,16 @@
                 "button": "Clear",
                 "clearing": "Clearing..."
             },
-            "clearSuccess": "Logs cleared",
-            "clearFailed": "Failed to clear logs"
+			"clearSuccess": "Logs cleared",
+			"clearFailed": "Failed to clear logs",
+			"export": {
+				"label": "Export Log Analysis",
+				"hours": "hours",
+				"button": "Export Analysis",
+				"exporting": "Exporting...",
+				"success": "Log analysis exported: {file}, {records} records",
+				"failed": "Failed to export log analysis"
+			}
         }
     },
     "group": {

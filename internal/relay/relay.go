@@ -46,17 +46,9 @@ func newRelayRun(c *gin.Context, inboundType llm.APIFormat, inAdapter transforme
 	}
 
 	if supportedModels := c.GetString("supported_models"); supportedModels != "" {
-		// intersect with currently available models, filter out disabled model names
 		availableModels, _ := op.GroupListModel(c.Request.Context())
-		supportedModelsArray := lo.Map(strings.Split(supportedModels, ","), func(s string, _ int) string {
-			return strings.TrimSpace(s)
-		})
-		effectiveModels := lo.Filter(supportedModelsArray, func(m string, _ int) bool {
-			return lo.Contains(availableModels, m)
-		})
-		// empty intersection → all specified models have expired, treat as unlimited
-		if len(effectiveModels) > 0 && !lo.Contains(effectiveModels, internalRequest.Model) {
-			log.Debugf("unsupported model: model=%s supported_models=%s effective=%v", internalRequest.Model, supportedModels, effectiveModels)
+		if !modelAllowedByAPIKey(supportedModels, availableModels, internalRequest.Model) {
+			log.Debugf("unsupported model: model=%s supported_models=%s available=%v", internalRequest.Model, supportedModels, availableModels)
 			err := errors.New("unsupported model")
 			resp.Error(c, http.StatusBadRequest, err.Error())
 			return nil, err
@@ -91,6 +83,18 @@ func newRelayRun(c *gin.Context, inboundType llm.APIFormat, inAdapter transforme
 		iter:  iter,
 		group: group,
 	}, nil
+}
+func modelAllowedByAPIKey(supportedModels string, availableModels []string, requestedModel string) bool {
+	if supportedModels == "" {
+		return true
+	}
+	supportedModelsArray := lo.Map(strings.Split(supportedModels, ","), func(s string, _ int) string {
+		return strings.TrimSpace(s)
+	})
+	effectiveModels := lo.Filter(supportedModelsArray, func(m string, _ int) bool {
+		return lo.Contains(availableModels, m)
+	})
+	return len(effectiveModels) == 0 || lo.Contains(effectiveModels, requestedModel)
 }
 
 func (r *relayRun) run() {
@@ -560,20 +564,6 @@ func successShapedError(body []byte) string {
 		}
 	}
 
-	lower := strings.ToLower(trimmed)
-	for _, signature := range [...]string{
-		"model is currently unavailable",
-		"rate limit exceeded",
-		"internal server error",
-		"upstream connect error",
-		"gateway timeout",
-		"too many requests",
-		"model not found",
-	} {
-		if strings.Contains(lower, signature) {
-			return lower
-		}
-	}
 	return ""
 }
 

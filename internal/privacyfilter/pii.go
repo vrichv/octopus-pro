@@ -131,7 +131,10 @@ func isIPv6Local(ip string) bool {
 	if low == "::1" || low == "::" {
 		return true
 	}
-	if strings.HasPrefix(low, "fe80:") || strings.HasPrefix(low, "fc") || strings.HasPrefix(low, "fd") {
+	if strings.HasPrefix(low, "fc") || strings.HasPrefix(low, "fd") {
+		return true
+	}
+	if len(low) >= 3 && low[0] == 'f' && low[1] == 'e' && ((low[2] >= '8' && low[2] <= '9') || (low[2] >= 'a' && low[2] <= 'b')) {
 		return true
 	}
 	return false

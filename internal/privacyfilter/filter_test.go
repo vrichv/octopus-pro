@@ -369,6 +369,14 @@ func TestIPv6LinkLocalSkipped(t *testing.T) {
 	}
 }
 
+func TestIPv6LinkLocalRangeSkipped(t *testing.T) {
+	f := newFilter(t)
+	res := f.Redact("fe90::1")
+	if res.Hit {
+		t.Errorf("fe90::/10 link-local 不应脱敏: %q", res.Redacted)
+	}
+}
+
 func TestIPv6ULASkipped(t *testing.T) {
 	f := newFilter(t)
 	res := f.Redact("fd12:3456:789a::1")

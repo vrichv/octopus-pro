@@ -168,21 +168,11 @@ export function ChannelForm({
                 onSuccess: (data) => {
                     const fetchedModels = dedupeModels(data ?? []);
                     if (fetchedModels.length === 0) return;
-                    const fetchedModelSet = new Set(fetchedModels);
-                    const currentAutoModelSet = new Set(selectedAutoModelRef.current);
-                    const currentCustomModelSet = new Set(selectedCustomModelRef.current);
-                    // Models not in autoModels or customModels are excluded (gray)
-                    const nextExcludedModels = dedupeModels([
-                        ...disabledAutoModelRef.current,
-                        ...fetchedModels.filter((model) =>
-                            !currentAutoModelSet.has(model) && !currentCustomModelSet.has(model)
-                        ),
-                    ]).filter((model) => fetchedModelSet.has(model));
-                    const nextExcludedModelSet = new Set(nextExcludedModels);
-                    const nextAutoModels = fetchedModels.filter((model) => !nextExcludedModelSet.has(model));
-                    availableModelsRef.current = fetchedModels;
-                    setAvailableModels(fetchedModels);
-                    updateModels(nextAutoModels, selectedCustomModelRef.current, nextExcludedModels);
+					const currentAutoModels = selectedAutoModelRef.current;
+					const currentExcludedModels = disabledAutoModelRef.current;
+					const visibleModels = dedupeModels([...fetchedModels, ...currentAutoModels, ...currentExcludedModels]);
+					availableModelsRef.current = visibleModels;
+					setAvailableModels(visibleModels);
                 },
             }
         );

@@ -155,9 +155,9 @@ func TestSuccessShapedError(t *testing.T) {
 			want: "model is currently unavailable",
 		},
 		{
-			name: "plain signature",
+			name: "plain signature ignored",
 			body: []byte("model is currently unavailable"),
-			want: "model is currently unavailable",
+			want: "",
 		},
 		{
 			name: "long body ignored",
