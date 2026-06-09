@@ -80,8 +80,9 @@ func newRelayRun(c *gin.Context, inboundType llm.APIFormat, inAdapter transforme
 			StartTime:       time.Now(),
 			InternalRequest: internalRequest,
 		},
-		iter:  iter,
-		group: group,
+		iter:             iter,
+		group:            group,
+		piiFilterEnabled: c.GetBool("pii_filter_enabled"),
 	}, nil
 }
 func modelAllowedByAPIKey(supportedModels string, availableModels []string, requestedModel string) bool {
@@ -399,7 +400,7 @@ func (ra *relayAttempt) forward() (int, error) {
 		ProxyDesc:   proxyDesc,
 	}
 	middlewares := []pipeline.Middleware{
-		plugins.NewPrivacyFilter(),
+		plugins.NewPrivacyFilter(ra.piiFilterEnabled),
 		plugins.NewRateLimiter(ra.channel, ra.usedKey.ID, ra.internalRequest.Model),
 		relayMiddleware,
 		stream.EnsureUsage(),

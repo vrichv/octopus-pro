@@ -5,11 +5,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/vrichv/octopus-pro/internal/conf"
 	"github.com/vrichv/octopus-pro/internal/op"
 	"github.com/vrichv/octopus-pro/internal/server/auth"
 	"github.com/vrichv/octopus-pro/internal/server/resp"
-	"github.com/gin-gonic/gin"
 )
 
 func Auth() gin.HandlerFunc {
@@ -78,6 +78,7 @@ func APIKeyAuth() gin.HandlerFunc {
 		c.Set("request_type", requestType)
 		c.Set("supported_models", apiKeyObj.SupportedModels)
 		c.Set("api_key_id", apiKeyObj.ID)
+		c.Set("pii_filter_enabled", apiKeyObj.PIIFilterEnabled)
 		c.Next()
 	}
 }

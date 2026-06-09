@@ -13,6 +13,7 @@ export interface APIKey {
     name: string;
     api_key: string;
     enabled: boolean;
+    pii_filter_enabled: boolean;
     expire_at?: number; // Unix 时间戳（秒），不传表示永不过期
     max_cost?: number; // 不传表示无限制
     supported_models?: string; // 不传表示支持所有模型

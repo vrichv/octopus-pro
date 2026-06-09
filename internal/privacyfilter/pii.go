@@ -40,6 +40,10 @@ func isInSSHCommandContext(text string, emailStart int) bool {
 
 func isDigit(b byte) bool { return b >= '0' && b <= '9' }
 
+func isWordChar(b byte) bool {
+	return isDigit(b) || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
+}
+
 // digitBounded 校验匹配两侧不是数字（替代 RE2 没有的前后向断言）。
 func digitBounded(text string, start, end int) bool {
 	if start > 0 && isDigit(text[start-1]) {
@@ -64,6 +68,74 @@ func isHexByte(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
+func isAddressBoundaryByte(b byte) bool {
+	return isWordChar(b) || b == ':' || b == '-' || b == '.'
+}
+
+func ipv6Bounded(text string, start, end int) bool {
+	if start > 0 && isAddressBoundaryByte(text[start-1]) {
+		return false
+	}
+	if end < len(text) && isAddressBoundaryByte(text[end]) {
+		return false
+	}
+	return true
+}
+
+func macBounded(text string, start, end int) bool {
+	if start > 0 && isAddressBoundaryByte(text[start-1]) {
+		return false
+	}
+	if end < len(text) && isAddressBoundaryByte(text[end]) {
+		return false
+	}
+	return true
+}
+
+func looksLikeIPv6Address(ip string) bool {
+	groups := 0
+	groupLen := 0
+	compression := false
+
+	for i := 0; i < len(ip); i++ {
+		b := ip[i]
+		if isHexByte(b) {
+			groupLen++
+			if groupLen > 4 {
+				return false
+			}
+			continue
+		}
+		if b != ':' {
+			return false
+		}
+		if i+1 < len(ip) && ip[i+1] == ':' {
+			if compression || groupLen == 0 && groups == 0 {
+				return false
+			}
+			if groupLen > 0 {
+				groups++
+				groupLen = 0
+			}
+			compression = true
+			i++
+			continue
+		}
+		if groupLen == 0 {
+			return false
+		}
+		groups++
+		groupLen = 0
+	}
+	if groupLen > 0 {
+		groups++
+	}
+	if compression {
+		return groups >= 2 && groups <= 7
+	}
+	return groups == 8
+}
+
 func isInLongHexByteSequence(text string, start, end int) bool {
 	if end-start < 3 {
 		return false
@@ -79,6 +151,28 @@ func isInLongHexByteSequence(text string, start, end int) bool {
 		return true
 	}
 	return false
+}
+
+func looksLikeMACAddress(mac string) bool {
+	if len(mac) != 17 {
+		return false
+	}
+	sep := mac[2]
+	if sep != ':' && sep != '-' {
+		return false
+	}
+	for i := 0; i < len(mac); i++ {
+		if i == 2 || i == 5 || i == 8 || i == 11 || i == 14 {
+			if mac[i] != sep {
+				return false
+			}
+			continue
+		}
+		if !isHexByte(mac[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // ipBounded 校验匹配两侧不是数字或点。
@@ -282,8 +376,7 @@ func detectPII(text string) []span {
 			if s > 0 && text[s-1] == '[' {
 				continue
 			}
-			// 排除本地/私有地址
-			if isIPv6Local(ip) {
+			if !ipv6Bounded(text, s, e) || !looksLikeIPv6Address(ip) || isIPv6Local(ip) {
 				continue
 			}
 			spans = append(spans, span{s, e, maskIPv6(ip)})
@@ -291,10 +384,10 @@ func detectPII(text string) []span {
 	}
 	if hasColon || hasDash {
 		for _, m := range reMAC.FindAllStringIndex(text, -1) {
-			if isInLongHexByteSequence(text, m[0], m[1]) {
+			mac := text[m[0]:m[1]]
+			if !macBounded(text, m[0], m[1]) || isInLongHexByteSequence(text, m[0], m[1]) || !looksLikeMACAddress(mac) {
 				continue
 			}
-			mac := text[m[0]:m[1]]
 			spans = append(spans, span{m[0], m[1], maskMAC(mac)})
 		}
 	}

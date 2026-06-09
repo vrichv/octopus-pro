@@ -166,9 +166,6 @@
         "experimentalFeatures": {
             "label": "Experimental Features"
         },
-        "privacyFilter": {
-            "label": "Privacy Filter (PII/Secret Redaction)"
-        },
         "corsAllowOrigins": {
             "label": "CORS Allowed Origins",
             "hint": "Empty = deny all, * = allow all",
@@ -229,6 +226,7 @@
                 "noModels": "No models available",
                 "modelsHint": "Leave empty for unlimited",
                 "enabled": "Enabled",
+                "piiFilterEnabled": "PII/Secret Redaction",
                 "cancel": "Cancel",
                 "create": "Create",
                 "save": "Save",

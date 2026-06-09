@@ -12,12 +12,13 @@ import (
 
 // relayRun 保存一次客户端请求在负载均衡循环中共享的状态。
 type relayRun struct {
-	c               *gin.Context
-	inAdapter       transformer.Inbound
-	internalRequest *llm.Request
-	metrics         *RelayMetrics
-	iter            *balancer.Iterator
-	group           dbmodel.Group
+	c                *gin.Context
+	inAdapter        transformer.Inbound
+	internalRequest  *llm.Request
+	metrics          *RelayMetrics
+	iter             *balancer.Iterator
+	group            dbmodel.Group
+	piiFilterEnabled bool
 }
 
 // relayAttempt 保存一次上游通道尝试的状态。

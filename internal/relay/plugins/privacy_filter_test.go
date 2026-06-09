@@ -15,7 +15,7 @@ func TestPrivacyFilterMiddlewareRedactsStringContent(t *testing.T) {
 	content := "我的邮箱是 test@example.com，密码是 Hunter2xyz"
 	request := &llm.Request{Messages: []llm.Message{{Role: "user", Content: llm.MessageContent{Content: &content}}}}
 
-	middleware := newPrivacyFilter(func() bool { return true }, func() (*privacyfilter.Filter, error) { return filter, nil })
+	middleware := newPrivacyFilter(true, func() (*privacyfilter.Filter, error) { return filter, nil })
 	got, err := middleware.OnInboundLlmRequest(context.Background(), request)
 	if err != nil {
 		t.Fatalf("OnInboundLlmRequest: %v", err)
@@ -36,7 +36,7 @@ func TestPrivacyFilterMiddlewareRedactsTextPartsOnly(t *testing.T) {
 		{Type: "image_url", ImageURL: imageURL},
 	}}}}}
 
-	middleware := newPrivacyFilter(func() bool { return true }, func() (*privacyfilter.Filter, error) { return filter, nil })
+	middleware := newPrivacyFilter(true, func() (*privacyfilter.Filter, error) { return filter, nil })
 	got, err := middleware.OnInboundLlmRequest(context.Background(), request)
 	if err != nil {
 		t.Fatalf("OnInboundLlmRequest: %v", err)
@@ -54,7 +54,7 @@ func TestPrivacyFilterMiddlewareDisabledIsNoop(t *testing.T) {
 	content := "test@example.com"
 	request := &llm.Request{Messages: []llm.Message{{Role: "user", Content: llm.MessageContent{Content: &content}}}}
 
-	middleware := newPrivacyFilter(func() bool { return false }, func() (*privacyfilter.Filter, error) {
+	middleware := newPrivacyFilter(false, func() (*privacyfilter.Filter, error) {
 		t.Fatal("filter should not be loaded when disabled")
 		return nil, nil
 	})
@@ -71,7 +71,7 @@ func TestPrivacyFilterMiddlewareInitErrorIsNoop(t *testing.T) {
 	content := "test@example.com"
 	request := &llm.Request{Messages: []llm.Message{{Role: "user", Content: llm.MessageContent{Content: &content}}}}
 
-	middleware := newPrivacyFilter(func() bool { return true }, func() (*privacyfilter.Filter, error) {
+	middleware := newPrivacyFilter(true, func() (*privacyfilter.Filter, error) {
 		return nil, errors.New("boom")
 	})
 	got, err := middleware.OnInboundLlmRequest(context.Background(), request)
@@ -87,7 +87,7 @@ func TestPrivacyFilterMiddlewareEmptyMessagesIsNoop(t *testing.T) {
 	filter := newTestPrivacyFilter(t)
 	request := &llm.Request{}
 
-	middleware := newPrivacyFilter(func() bool { return true }, func() (*privacyfilter.Filter, error) { return filter, nil })
+	middleware := newPrivacyFilter(true, func() (*privacyfilter.Filter, error) { return filter, nil })
 	got, err := middleware.OnInboundLlmRequest(context.Background(), request)
 	if err != nil {
 		t.Fatalf("OnInboundLlmRequest: %v", err)

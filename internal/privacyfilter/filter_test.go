@@ -393,6 +393,54 @@ func TestIPv6InURLSkipped(t *testing.T) {
 	}
 }
 
+func TestIPv6SkipsCppScopeOperator(t *testing.T) {
+	f := newFilter(t)
+	cases := []string{
+		"pcba::getsomthing",
+		"std::cout",
+		"my_ns::func",
+		"A::B::C",
+		"namespace::Class::method",
+	}
+	for _, input := range cases {
+		res := f.Redact(input)
+		if res.Hit || res.Redacted != input {
+			t.Errorf("C++ scope operator should not be redacted: in=%q got=%q", input, res.Redacted)
+		}
+	}
+}
+
+func TestIPv6SkipsNonPublicOrAmbiguousAddresses(t *testing.T) {
+	f := newFilter(t)
+	cases := []string{
+		"addr ::ffff:2030",
+		"addr ::dead",
+		"addr 2001::",
+		"addr cba::",
+		"addr dead::",
+	}
+	for _, input := range cases {
+		res := f.Redact(input)
+		if res.Hit || res.Redacted != input {
+			t.Errorf("non-public or ambiguous IPv6 should not be redacted: in=%q got=%q", input, res.Redacted)
+		}
+	}
+}
+
+func TestIPv6StillMasksStandaloneAddresses(t *testing.T) {
+	f := newFilter(t)
+	cases := map[string]string{
+		"addr cafe:babe::dead": "cafe:*::*dead",
+		"addr 2001:db8::1":     "2001:*::*1",
+	}
+	for input, want := range cases {
+		res := f.Redact(input)
+		if !strings.Contains(res.Redacted, want) {
+			t.Errorf("standalone IPv6 should be redacted: in=%q got=%q want %q", input, res.Redacted, want)
+		}
+	}
+}
+
 // --- sk- API Key 部分脱敏 ---
 // --- sk- API Key 部分脱敏 ---
 func TestSKKeyMask(t *testing.T) {
@@ -460,6 +508,36 @@ func TestMACDashLettersOnlyMasked(t *testing.T) {
 	res := f.Redact("ether aa-bb-cc-dd-ee-ff")
 	if !strings.Contains(res.Redacted, "aa-*-*-*-*-ff") {
 		t.Errorf("MAC dash 无十进制数字时也应脱敏: %q", res.Redacted)
+	}
+}
+
+func TestMACSkipsEmbeddedCodeTokens(t *testing.T) {
+	f := newFilter(t)
+	cases := []string{
+		"map[key-a0:11:22:33:44:55]",
+		"foo-a0-11-22-33-44-55-bar",
+	}
+	for _, input := range cases {
+		res := f.Redact(input)
+		if res.Hit || res.Redacted != input {
+			t.Errorf("embedded MAC-like token should not be redacted: in=%q got=%q", input, res.Redacted)
+		}
+	}
+}
+
+func TestMACSkipsMalformedCandidates(t *testing.T) {
+	f := newFilter(t)
+	cases := []string{
+		"ether a0:11-22:33-44:55",
+		"ether a0:11:22:33:44",
+		"ether a0:11:22:33:44:5g",
+		"ether aa:bb:cc:dd:ee:ff:00",
+	}
+	for _, input := range cases {
+		res := f.Redact(input)
+		if res.Hit || res.Redacted != input {
+			t.Errorf("malformed MAC candidate should not be redacted: in=%q got=%q", input, res.Redacted)
+		}
 	}
 }
 

@@ -6,8 +6,6 @@ import (
 
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/pipeline"
-	"github.com/vrichv/octopus-pro/internal/model"
-	"github.com/vrichv/octopus-pro/internal/op"
 	"github.com/vrichv/octopus-pro/internal/privacyfilter"
 	"github.com/vrichv/octopus-pro/internal/utils/log"
 )
@@ -28,20 +26,15 @@ func getPrivacyFilter() (*privacyfilter.Filter, error) {
 	return privacyFilter, privacyInitErr
 }
 
-func privacyFilterEnabled() bool {
-	enabled, err := op.SettingGetBool(model.SettingKeyPrivacyFilterEnabled)
-	return err == nil && enabled
-}
-
 // NewPrivacyFilter creates a request-scoped privacy filter middleware.
-// It is a no-op unless SettingKeyPrivacyFilterEnabled is true.
-func NewPrivacyFilter() pipeline.Middleware {
-	return newPrivacyFilter(privacyFilterEnabled, getPrivacyFilter)
+// It is a no-op unless the input API key enables PII filtering.
+func NewPrivacyFilter(enabled bool) pipeline.Middleware {
+	return newPrivacyFilter(enabled, getPrivacyFilter)
 }
 
-func newPrivacyFilter(enabled func() bool, getFilter func() (*privacyfilter.Filter, error)) pipeline.Middleware {
+func newPrivacyFilter(enabled bool, getFilter func() (*privacyfilter.Filter, error)) pipeline.Middleware {
 	return pipeline.OnLlmRequest("privacy_filter", func(_ context.Context, request *llm.Request) (*llm.Request, error) {
-		if request == nil || !enabled() {
+		if request == nil || !enabled {
 			return request, nil
 		}
 		filter, err := getFilter()

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { KeyRound, Plus, Loader, Trash2, Check, X, Info, CalendarDays, Pencil, Maximize2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -86,6 +86,7 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
     const [form, setForm] = useState<Omit<APIKey, 'id' | 'api_key'>>(() => ({
         name: apiKey?.name ?? '',
         enabled: apiKey?.enabled ?? true,
+        pii_filter_enabled: apiKey?.pii_filter_enabled ?? false,
         expire_at: apiKey?.expire_at,
         max_cost: apiKey?.max_cost,
         supported_models: apiKey?.supported_models,
@@ -310,6 +311,15 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
                     )}
                 </div>
                 <div className="text-[11px] text-muted-foreground/80">{t('apiKey.form.modelsHint')}</div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+                <span className="text-xs text-muted-foreground">{t('apiKey.form.piiFilterEnabled')}</span>
+                <Switch
+                    checked={form.pii_filter_enabled ?? false}
+                    onCheckedChange={(checked) => updateForm({ pii_filter_enabled: checked })}
+                    disabled={isPending}
+                />
             </div>
 
             <div className="flex items-center justify-between pt-1">
