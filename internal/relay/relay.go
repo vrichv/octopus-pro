@@ -244,6 +244,9 @@ func (ra *relayAttempt) run() (bool, error) {
 	if fwdErr != nil && statusCode == 0 {
 		statusCode = ra.statusCode
 	}
+	if fwdErr != nil && statusCode == 0 {
+		statusCode = http.StatusBadGateway
+	}
 
 	// success path
 	if fwdErr == nil {

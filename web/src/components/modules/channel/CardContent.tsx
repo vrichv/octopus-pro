@@ -440,12 +440,13 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                         </span>
                                                     )}
 
-                                                    {key.status_code !== 0 && (
-                                                        <Badge
-                                                            variant="secondary"
-                                                            className={cn(
-                                                                "h-5 px-1.5 text-[10px]",
-                                                                key.status_code === 200
+                                                    <Badge
+                                                        variant="secondary"
+                                                        className={cn(
+                                                            "h-5 px-1.5 text-[10px]",
+                                                            key.status_code === 0
+                                                                ? "bg-gray-500/15 text-gray-500 dark:text-gray-400"
+                                                                : key.status_code === 200
                                                                     ? "bg-green-500/15 text-green-700 dark:text-green-400"
                                                                     : key.status_code === 401 ||
                                                                         key.status_code === 403 ||
@@ -453,11 +454,10 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                                         key.status_code >= 500
                                                                         ? "bg-red-500/15 text-red-700 dark:text-red-400"
                                                                         : "bg-orange-500/15 text-orange-700 dark:text-orange-400"
-                                                            )}
-                                                        >
-                                                            {key.status_code}
-                                                        </Badge>
-                                                    )}
+                                                        )}
+                                                    >
+                                                        {key.status_code === 0 ? "—" : key.status_code}
+                                                    </Badge>
 
                                                     <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
                                                         {formatMoney(key.total_cost).formatted.value}
