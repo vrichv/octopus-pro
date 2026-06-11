@@ -413,9 +413,16 @@ func (ra *relayAttempt) forward() (int, error) {
 		}),
 		plugins.NewLogger(logFields),
 	}
+	// UpstreamTimeOut 只对非流式请求有意义——限定完整 HTTP 请求-响应周期的最大等待时间。
+	// 流式请求的生命周期由 writeStream 内的三个超时独立管理：
+	//   FirstTokenTimeOut — 首 token 超时，超时切渠道
+	//   StreamIdleTimeOut — token 间空闲超时
+	//   StreamHardTimeOut — 流总时长上限
+	// 流式请求在 pipeline.Process 阶段由原始请求 ctx + OS TCP 超时兜底。
 	processCtx := ctx
 	var cancel context.CancelFunc
-	if ra.group.UpstreamTimeOut > 0 {
+	isStreaming := ra.internalRequest.Stream != nil && *ra.internalRequest.Stream
+	if ra.group.UpstreamTimeOut > 0 && !isStreaming {
 		processCtx, cancel = context.WithTimeout(ctx, time.Duration(ra.group.UpstreamTimeOut)*time.Second)
 		defer cancel()
 	}
