@@ -592,12 +592,41 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 
 	firstToken := true
 	responseEvents := make([]*httpclient.StreamEvent, 0, 8)
+	usageRecorded := false
 	type sseReadResult struct {
 		event *httpclient.StreamEvent
 		err   error
 	}
 	results := make(chan sseReadResult, 1)
 	done := make(chan struct{})
+	// recordStreamUsage drains any remaining events from the results channel,
+	// aggregates collected stream events, and records usage.
+	// Called on every exit path (normal end, disconnect, timeout, error) so that
+	// partial usage is never silently dropped.
+	recordStreamUsage := func() {
+		if usageRecorded {
+			return
+		}
+		// Drain remaining events from the goroutine that may have been sent
+		// before the main loop exited via ctx.Done() / timeout.
+		for r := range results {
+			if r.err == nil && r.event != nil && len(r.event.Data) > 0 {
+				responseEvents = append(responseEvents, r.event)
+			}
+		}
+		if len(responseEvents) == 0 {
+			return
+		}
+		usageRecorded = true
+		responseBody, meta, err := ra.inAdapter.AggregateStreamChunks(context.WithoutCancel(ctx), responseEvents)
+		if err != nil {
+			log.Warnf("failed to aggregate stream response for log: %v", err)
+			return
+		}
+		ra.metrics.InternalResponse = responseBody
+		ra.metrics.RecordUsage(meta.Usage)
+	}
+	defer recordStreamUsage()
 	defer close(done)
 	go func() {
 		defer close(results)
@@ -699,6 +728,7 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 				}
 				ra.metrics.InternalResponse = responseBody
 				ra.metrics.RecordUsage(meta.Usage)
+				usageRecorded = true
 				return nil
 			}
 			if r.err != nil {
