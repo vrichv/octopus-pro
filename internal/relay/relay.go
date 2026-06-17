@@ -198,7 +198,7 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 		return nil, nil
 	}
 
-	usedKey := channel.GetChannelKey()
+	usedKey := channel.GetChannelKey(item.ModelName)
 	if usedKey.ChannelKey == "" {
 		r.iter.Skip(channel.ID, 0, channel.Name, "no available key")
 		return nil, nil
@@ -257,6 +257,7 @@ func (ra *relayAttempt) run() (bool, error) {
 			AuthResult:       op.ChannelKeyAuthSuccess,
 		})
 
+		dbmodel.ClearKeyModelCooldown(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 		span.End(dbmodel.AttemptSuccess, "")
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:       span.Duration().Milliseconds(),
@@ -307,6 +308,8 @@ func (ra *relayAttempt) run() (bool, error) {
 			update.RetryAfter = int64(ra.retryAfter.Seconds())
 		}
 		ra.applyKeyRuntimeUpdate(update)
+		// per-key-per-model 冷却：仅冷却当前 (key, model) 组合，不影响同 key 的其他模型
+		dbmodel.RecordKeyModelCooldown(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.retryAfter)
 		span.End(dbmodel.AttemptFailed, fwdErr.Error())
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),

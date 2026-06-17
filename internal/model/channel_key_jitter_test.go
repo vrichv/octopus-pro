@@ -26,7 +26,8 @@ func TestGetChannelKey_429CooldownJitter(t *testing.T) {
 	}
 
 	// At T+5min (300s): base cooldown expired, but jitter keeps most keys cooling
-	key := ch.GetChannelKey()
+	// modelName="" → 回退 key 级 StatusCode 检查（向后兼容）
+	key := ch.GetChannelKey("")
 	// Only key with smallest jitter (ID%60) should be available: 37%60=37, 38%60=38, ...
 	// At 300s: key37 needs 337s (unavailable), key38 needs 338s (unavailable), ...
 	// All should still be cooling at 300s since min jitter is 37s
@@ -42,7 +43,7 @@ func TestGetChannelKey_429CooldownJitter(t *testing.T) {
 	}
 	ch.Keys = keys2
 
-	key = ch.GetChannelKey()
+	key = ch.GetChannelKey("")
 	// key37 cooldown = 300+37 = 337s, elapsed = 337s → available
 	// key38 cooldown = 300+38 = 338s, elapsed = 337s → still cooling
 	if key.ID != 37 {
@@ -57,5 +58,70 @@ func TestGetChannelKey_429CooldownJitter(t *testing.T) {
 			t.Errorf("duplicate jitter value %d for key %d", j, k.ID)
 		}
 		jitterSet[j] = true
+	}
+}
+
+func TestGetChannelKey_ModelAwareCooldown(t *testing.T) {
+	// 一个 key，共享给两个模型
+	key := ChannelKey{ID: 37, ChannelID: 7, Enabled: true, ChannelKey: "k37"}
+	ch := &Channel{
+		ID:      7,
+		Name:    "test",
+		Enabled: true,
+		Keys:    []ChannelKey{key},
+	}
+
+	// 对 modelA 记录 429 冷却
+	RecordKeyModelCooldown(7, 37, "modelA", 0) // 使用默认冷却
+	ClearKeyModelCooldown(7, 37, "modelB")     // 确保 modelB 干净
+
+	// modelA 应在冷却中，GetChannelKey 应返回空 key（被跳过）
+	got := ch.GetChannelKey("modelA")
+	if got.ChannelKey != "" {
+		t.Errorf("expected no key for modelA (in cooldown), got key %s", got.ChannelKey)
+	}
+
+	// modelB 不应在冷却中，应返回可用 key
+	got = ch.GetChannelKey("modelB")
+	if got.ChannelKey == "" {
+		t.Errorf("expected key for modelB (no cooldown), got empty")
+	}
+	if got.ID != 37 {
+		t.Errorf("expected key 37 for modelB, got key %d", got.ID)
+	}
+
+	// 对 modelB 也记录冷却
+	RecordKeyModelCooldown(7, 37, "modelB", 0)
+
+	// 两个模型都应不可用
+	got = ch.GetChannelKey("modelA")
+	if got.ChannelKey != "" {
+		t.Errorf("expected no key for modelA (still in cooldown), got key %s", got.ChannelKey)
+	}
+	got = ch.GetChannelKey("modelB")
+	if got.ChannelKey != "" {
+		t.Errorf("expected no key for modelB (now in cooldown), got key %s", got.ChannelKey)
+	}
+
+	// 清除 modelA 的冷却
+	ClearKeyModelCooldown(7, 37, "modelA")
+
+	// modelA 应恢复可用，modelB 仍不可用
+	got = ch.GetChannelKey("modelA")
+	if got.ChannelKey == "" {
+		t.Errorf("expected key for modelA (cooldown cleared), got empty")
+	}
+	got = ch.GetChannelKey("modelB")
+	if got.ChannelKey != "" {
+		t.Errorf("expected no key for modelB (still in cooldown), got key %s", got.ChannelKey)
+	}
+
+	// 空 modelName 应回退 key 级检查（不应受 model 级冷却影响）
+	got = ch.GetChannelKey("")
+	if got.ChannelKey == "" {
+		t.Errorf("expected key when modelName='' (fallback to StatusCode check, no StatusCode set), got empty")
+	}
+	if got.ID != 37 {
+		t.Errorf("expected key 37 for modelName='', got key %d", got.ID)
 	}
 }

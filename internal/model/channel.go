@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -136,7 +137,7 @@ func (c *Channel) GetBaseUrl() string {
 	return bestURL
 }
 
-func (c *Channel) GetChannelKey() ChannelKey {
+func (c *Channel) GetChannelKey(modelName string) ChannelKey {
 	if c == nil || len(c.Keys) == 0 {
 		return ChannelKey{}
 	}
@@ -159,8 +160,14 @@ func (c *Channel) GetChannelKey() ChannelKey {
 			continue
 		}
 
-		// 冷却判定：优先使用动态 RetryAfter，否则按 2 分钟默认冷却
-		if k.StatusCode == 429 && k.LastUseTimeStamp > 0 {
+		// 冷却判定：
+		// - 有 modelName（relay 场景）：使用 per-key-per-model 冷却跟踪，各模型独立
+		// - 无 modelName（fetch 场景）：回退 key 级 StatusCode 检查（向后兼容）
+		if modelName != "" {
+			if isKeyModelCooling(c.ID, k.ID, modelName) {
+				continue
+			}
+		} else if k.StatusCode == 429 && k.LastUseTimeStamp > 0 {
 			cooldown := int64(2*time.Minute/time.Second) + int64(k.ID%60)
 			if k.RetryAfter > 0 {
 				cooldown = k.RetryAfter
@@ -199,4 +206,112 @@ func (c *Channel) GetChannelKey() ChannelKey {
 // CleanupKeyRRIndex 清理 channel 的 RR 轮询索引（channel 删除时调用）。
 func CleanupKeyRRIndex(channelID int) {
 	keyRRIndex.Delete(channelID)
+}
+
+// ---------------------------------------------------------------------------
+// Per-Key-Per-Model 429 Cooldown Tracker
+//
+// 每个 (channel, key, model) 组合独立跟踪 429 冷却状态，避免一个模型的 429 影响同 key
+// 下的其他模型。key 级别的 StatusCode 字段仍保留用于 UI 展示，路由决策使用本跟踪器。
+// ---------------------------------------------------------------------------
+
+// keyModelCooldownEntry 记录 (channel, key, model) 的冷却截止时间。
+type keyModelCooldownEntry struct {
+	cooldownUntil time.Time // zero time 表示未冷却
+	mu            sync.Mutex
+}
+
+// globalKeyModelCooldown 全局限流冷却映射表。
+// key 格式: "ch:{channelID}:k:{keyID}:m:{modelName}"
+var globalKeyModelCooldown sync.Map
+
+// keyModelCooldownOnce 用于 lazy-init 后台清理 goroutine。
+var keyModelCooldownOnce sync.Once
+
+// modelCooldownKey 生成冷却映射表的键。
+func modelCooldownKey(channelID, keyID int, modelName string) string {
+	return fmt.Sprintf("ch:%d:k:%d:m:%s", channelID, keyID, modelName)
+}
+
+// getOrCreateCooldownEntry 获取或创建冷却条目。
+func getOrCreateCooldownEntry(key string) *keyModelCooldownEntry {
+	if v, ok := globalKeyModelCooldown.Load(key); ok {
+		return v.(*keyModelCooldownEntry)
+	}
+	entry := &keyModelCooldownEntry{}
+	actual, _ := globalKeyModelCooldown.LoadOrStore(key, entry)
+	return actual.(*keyModelCooldownEntry)
+}
+
+// ensureModelCooldownCleanup 启动后台 goroutine 定期清理过期条目。
+func ensureModelCooldownCleanup() {
+	keyModelCooldownOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(10 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				now := time.Now()
+				globalKeyModelCooldown.Range(func(key, value any) bool {
+					entry := value.(*keyModelCooldownEntry)
+					entry.mu.Lock()
+					if entry.cooldownUntil.IsZero() || now.After(entry.cooldownUntil) {
+						globalKeyModelCooldown.Delete(key)
+					}
+					entry.mu.Unlock()
+					return true
+				})
+			}
+		}()
+	})
+}
+
+// RecordKeyModelCooldown 记录指定 (key, model) 的 429 冷却。
+// retryAfter 为 0 或负值时使用默认冷却（2 分钟 + keyID%60 抖动）。
+// 该函数导出给 relay 包在收到上游 429 时调用。
+func RecordKeyModelCooldown(channelID, keyID int, modelName string, retryAfter time.Duration) {
+	ensureModelCooldownCleanup()
+	key := modelCooldownKey(channelID, keyID, modelName)
+	entry := getOrCreateCooldownEntry(key)
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	cooldown := retryAfter
+	if cooldown <= 0 {
+		// 默认冷却：2 分钟 + keyID % 60 秒抖动（防止所有 key 同时恢复）
+		cooldown = 2*time.Minute + time.Duration(keyID%60)*time.Second
+	}
+	entry.cooldownUntil = time.Now().Add(cooldown)
+}
+
+// ClearKeyModelCooldown 清除指定 (key, model) 的冷却记录。
+// 导出给 relay 包在请求成功时调用。
+func ClearKeyModelCooldown(channelID, keyID int, modelName string) {
+	key := modelCooldownKey(channelID, keyID, modelName)
+	globalKeyModelCooldown.Delete(key)
+}
+
+// isKeyModelCooling 检查指定 (key, model) 是否处于冷却中。
+// 如果冷却已过期，自动重置并返回 false。
+func isKeyModelCooling(channelID, keyID int, modelName string) bool {
+	key := modelCooldownKey(channelID, keyID, modelName)
+	v, ok := globalKeyModelCooldown.Load(key)
+	if !ok {
+		return false
+	}
+	entry := v.(*keyModelCooldownEntry)
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	if entry.cooldownUntil.IsZero() {
+		// 已被其他路径重置为零值，直接删除死条目避免泄漏
+		globalKeyModelCooldown.Delete(key)
+		return false
+	}
+	if time.Now().After(entry.cooldownUntil) {
+		globalKeyModelCooldown.Delete(key) // 过期条目直接删除，而非仅重置
+		return false
+	}
+	return true
 }

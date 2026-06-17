@@ -158,7 +158,6 @@ func TestWriteStream_ClientDisconnectRecordsPartialUsage(t *testing.T) {
 	}
 }
 
-
 func TestWriteStream_StreamEndNoDuplicateUsage(t *testing.T) {
 	in := &trackingInbound{
 		usage: &llm.Usage{PromptTokens: 500, CompletionTokens: 100},

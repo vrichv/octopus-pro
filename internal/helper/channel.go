@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/dlclark/regexp2"
 	"github.com/vrichv/octopus-pro/internal/client"
 	"github.com/vrichv/octopus-pro/internal/model"
 	"github.com/vrichv/octopus-pro/internal/op"
 	"github.com/vrichv/octopus-pro/internal/utils/log"
 	"github.com/vrichv/octopus-pro/internal/utils/xstrings"
-	"github.com/dlclark/regexp2"
 )
 
 func ChannelHttpClient(channel *model.Channel) (*http.Client, error) {

@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/vrichv/octopus-pro/internal/model"
 	"github.com/dlclark/regexp2"
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/transformer"
+	"github.com/vrichv/octopus-pro/internal/model"
 )
 
 func FetchModels(ctx context.Context, request model.Channel) ([]string, error) {
@@ -61,7 +61,7 @@ func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.C
 		baseURL+"/models",
 		nil,
 	)
-	req.Header.Set("Authorization", "Bearer "+request.GetChannelKey().ChannelKey)
+	req.Header.Set("Authorization", "Bearer "+request.GetChannelKey("").ChannelKey)
 	applyCustomHeaders(req, request)
 
 	resp, err := client.Do(req)
@@ -100,7 +100,7 @@ func fetchGeminiModels(client *http.Client, ctx context.Context, request model.C
 			baseURL+"/models",
 			nil,
 		)
-		req.Header.Set("X-Goog-Api-Key", request.GetChannelKey().ChannelKey)
+		req.Header.Set("X-Goog-Api-Key", request.GetChannelKey("").ChannelKey)
 		applyCustomHeaders(req, request)
 		if pageToken != "" {
 			q := req.URL.Query()
@@ -150,7 +150,7 @@ func fetchAnthropicModels(client *http.Client, ctx context.Context, request mode
 			baseURL+"/models",
 			nil,
 		)
-		req.Header.Set("X-Api-Key", request.GetChannelKey().ChannelKey)
+		req.Header.Set("X-Api-Key", request.GetChannelKey("").ChannelKey)
 		req.Header.Set("Anthropic-Version", "2023-06-01")
 		applyCustomHeaders(req, request)
 		// 设置多页参数
