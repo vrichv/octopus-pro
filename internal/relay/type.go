@@ -29,7 +29,9 @@ type relayAttempt struct {
 	usedKey         dbmodel.ChannelKey
 	statusCode      int           // 上游 HTTP 状态码
 	retryAfter      time.Duration // 429 响应中 Retry-After 指定的冷却时长
+	keyCooldown     time.Duration // 临时冷却时长：慢流、流中断等需快速降低该 key 使用率
 	rateLimited     bool          // 本次尝试因本地限流失败
 	rateLimitWait   time.Duration // 限流等待时间
 	responseWritten bool          // true after streaming writes a client-visible event
+	tryNextKey      bool          // true: 试同一渠道下一个 key; false: 切下一渠道
 }

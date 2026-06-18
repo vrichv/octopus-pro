@@ -125,3 +125,47 @@ func TestGetChannelKey_ModelAwareCooldown(t *testing.T) {
 		t.Errorf("expected key 37 for modelName='', got key %d", got.ID)
 	}
 }
+
+func TestRecordKeyModelTemporaryCooldown_ModelScoped(t *testing.T) {
+	key := ChannelKey{ID: 52, ChannelID: 9, Enabled: true, ChannelKey: "k52"}
+	ch := &Channel{ID: 9, Name: "test", Enabled: true, Keys: []ChannelKey{key}}
+
+	RecordKeyModelTemporaryCooldown(9, 52, "modelA", time.Minute)
+	defer ClearKeyModelCooldown(9, 52, "modelA")
+
+	if got := ch.GetChannelKey("modelA"); got.ChannelKey != "" {
+		t.Fatalf("expected modelA key to be cooled temporarily, got %+v", got)
+	}
+	if got := ch.GetChannelKey("modelB"); got.ChannelKey == "" {
+		t.Fatal("expected modelB to remain available")
+	}
+}
+
+func TestGetChannelKeys_CostModeReturnsFallbackOrder(t *testing.T) {
+	ch := &Channel{
+		ID:      10,
+		Enabled: true,
+		Keys: []ChannelKey{
+			{ID: 1, ChannelID: 10, Enabled: true, ChannelKey: "k1", TotalCost: 30},
+			{ID: 2, ChannelID: 10, Enabled: true, ChannelKey: "k2", TotalCost: 10},
+			{ID: 3, ChannelID: 10, Enabled: true, ChannelKey: "k3", TotalCost: 20},
+		},
+	}
+
+	keys := ch.GetChannelKeys("modelA")
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+	if keys[0].ID != 2 {
+		t.Fatalf("expected lowest-cost key first, got %d", keys[0].ID)
+	}
+	seen := map[int]bool{}
+	for _, key := range keys {
+		seen[key.ID] = true
+	}
+	for _, id := range []int{1, 2, 3} {
+		if !seen[id] {
+			t.Fatalf("missing key %d in ordered result", id)
+		}
+	}
+}

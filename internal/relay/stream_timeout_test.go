@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -243,6 +244,12 @@ func TestWriteStream_FirstTokenTimeoutBeforeWriteAllowsRetry(t *testing.T) {
 	if ra.responseWritten {
 		t.Fatal("expected responseWritten to stay false before first event")
 	}
+	if ra.statusCode != http.StatusGatewayTimeout {
+		t.Fatalf("expected gateway timeout status, got %d", ra.statusCode)
+	}
+	if ra.keyCooldown < 30*time.Second {
+		t.Fatalf("expected key cooldown >=30s, got %v", ra.keyCooldown)
+	}
 }
 
 func TestWriteStream_StreamIdleTimeoutAfterFirstEventMarksWritten(t *testing.T) {
@@ -260,6 +267,12 @@ func TestWriteStream_StreamIdleTimeoutAfterFirstEventMarksWritten(t *testing.T) 
 	if body := recorder.Body.String(); !strings.Contains(body, "{\"choices\":[]}") {
 		t.Fatalf("expected recorder body to contain SSE data, got %q", body)
 	}
+	if ra.statusCode != http.StatusGatewayTimeout {
+		t.Fatalf("expected gateway timeout status, got %d", ra.statusCode)
+	}
+	if ra.keyCooldown < 60*time.Second {
+		t.Fatalf("expected key cooldown >=60s, got %v", ra.keyCooldown)
+	}
 }
 
 func TestWriteStream_StreamHardTimeoutBeforeFirstEventAllowsRetry(t *testing.T) {
@@ -272,6 +285,37 @@ func TestWriteStream_StreamHardTimeoutBeforeFirstEventAllowsRetry(t *testing.T) 
 	}
 	if ra.responseWritten {
 		t.Fatal("expected responseWritten to stay false before first event")
+	}
+	if ra.statusCode != http.StatusGatewayTimeout {
+		t.Fatalf("expected gateway timeout status, got %d", ra.statusCode)
+	}
+	if ra.keyCooldown < 60*time.Second {
+		t.Fatalf("expected key cooldown >=60s, got %v", ra.keyCooldown)
+	}
+}
+
+func TestWriteStream_ReadErrorAfterFirstEventPenalizesKey(t *testing.T) {
+	ra, recorder := newTestRelayAttempt(model.Group{})
+	stream := newFakeStream()
+	stream.events <- &httpclient.StreamEvent{Type: "message", Data: []byte("{\"choices\":[]}")}
+	stream.err = errors.New("upstream stream broken")
+	close(stream.events)
+
+	err := ra.writeStream(ra.c.Request.Context(), stream)
+	if err == nil || !strings.Contains(err.Error(), "failed to read stream event") {
+		t.Fatalf("expected read error, got %v", err)
+	}
+	if !ra.responseWritten {
+		t.Fatal("expected responseWritten after first event")
+	}
+	if ra.statusCode != http.StatusBadGateway {
+		t.Fatalf("expected bad gateway status, got %d", ra.statusCode)
+	}
+	if ra.keyCooldown < 60*time.Second {
+		t.Fatalf("expected key cooldown >=60s, got %v", ra.keyCooldown)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "{\"choices\":[]}") {
+		t.Fatalf("expected recorder body to contain SSE data, got %q", body)
 	}
 }
 

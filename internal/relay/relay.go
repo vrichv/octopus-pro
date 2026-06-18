@@ -102,17 +102,8 @@ func (r *relayRun) run() {
 	ctx := r.c.Request.Context()
 	var lastErr error
 
-	// round 0 = first pass, round 1 = retry after rate-limit wait
-	for round := 0; round <= 1; round++ {
-		if round > 0 {
-			r.iter.Reset()
-			lastErr = nil
-		}
-
-		allRateLimited := true
-		var minWait time.Duration
-
-		for r.iter.Next() {
+	for r.iter.Next() {
+		for {
 			select {
 			case <-ctx.Done():
 				log.Debugf("request context canceled, stopping retry")
@@ -121,61 +112,42 @@ func (r *relayRun) run() {
 			default:
 			}
 
-			// 对同一个渠道的多个 key 进行重试（429 时自动切换到下一个 key）
-			// 前一个 key 已被标记冷却，GetChannelKey 会跳过它并返回其他可用 key
-			for keyRetry := 0; keyRetry < 10; keyRetry++ {
-				attempt, err := r.prepareAttempt()
-				if err != nil {
-					lastErr = err
-					break
-				}
-				if attempt == nil {
-					break
-				}
-
-				written, err := attempt.run()
-				if err == nil {
-					r.metrics.Save(ctx, true, nil, r.iter.Attempts())
-					return
-				}
-				if written {
-					r.metrics.Save(ctx, false, err, r.iter.Attempts())
-					return
-				}
+			attempt, err := r.prepareAttempt()
+			if err != nil {
 				lastErr = err
-
-				if attempt.rateLimited {
-					// 本地限流：记录等待时间，跳出 key 循环
-					if minWait == 0 || attempt.rateLimitWait < minWait {
-						minWait = attempt.rateLimitWait
-					}
-					break
-				}
-				// 非限流错误 → 标记有真实故障
-				allRateLimited = false
-				// 429 → 尝试渠道的下一个 key
-				if attempt.statusCode != http.StatusTooManyRequests {
-					break
-				}
+				break // channel-level error → next channel
 			}
-			if !allRateLimited {
-				break // 有真实故障，无需等待
+			if attempt == nil {
+				break // no more available keys in this channel
 			}
-		}
 
-		// 首次遍历：全部限流 + 等待时间合理 → 等待后重试
-		if round == 0 && allRateLimited && minWait > 0 && minWait <= 2*time.Minute {
-			log.Infof("all channels rate-limited, waiting %v for next slot", minWait)
-			select {
-			case <-time.After(minWait):
-				log.Infof("rate-limit wait completed, retrying all channels")
-				continue
-			case <-ctx.Done():
-				r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
+			written, err := attempt.run()
+			if err == nil {
+				r.metrics.Save(ctx, true, nil, r.iter.Attempts())
 				return
 			}
+			if written {
+				r.metrics.Save(ctx, false, err, r.iter.Attempts())
+				return
+			}
+			lastErr = err
+
+			// 本地限流：自身控制的速度，等待窗口后重试本 key
+			if attempt.rateLimited {
+				select {
+				case <-time.After(attempt.rateLimitWait):
+					continue
+				case <-ctx.Done():
+					r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
+					return
+				}
+			}
+
+			if attempt.tryNextKey {
+				continue // 试同渠道下一个 key
+			}
+			break // 切下一渠道
 		}
-		break // 非限流故障或等待超时，退出循环
 	}
 
 	if lastErr == nil {
@@ -197,37 +169,41 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 		r.iter.Skip(channel.ID, 0, channel.Name, "channel disabled")
 		return nil, nil
 	}
-
-	usedKey := channel.GetChannelKey(item.ModelName)
-	if usedKey.ChannelKey == "" {
+	orderedKeys := channel.GetChannelKeys(item.ModelName)
+	if len(orderedKeys) == 0 {
 		r.iter.Skip(channel.ID, 0, channel.Name, "no available key")
 		return nil, nil
 	}
-	if r.iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
-		return nil, nil
+	for _, usedKey := range orderedKeys {
+		if r.iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
+			continue
+		}
+
+		outAdapter, err := newOutbound(channel.Type, r.internalRequest, channel.GetBaseUrl(), usedKey.ChannelKey)
+		if err != nil {
+			r.iter.Skip(channel.ID, usedKey.ID, channel.Name, err.Error())
+			return nil, nil
+		}
+
+		// set client model to the current candidate's actual upstream model on each attempt; retry will overwrite with next candidate.
+		r.internalRequest.Model = item.ModelName
+		r.metrics.ActualModel = item.ModelName
+		r.metrics.ParamOverride = ""
+		log.Debugf("forwarding to channel: model=%s mode=%d channel=%s upstream_model=%s key=%s (attempt %d/%d, sticky=%t)",
+			r.metrics.RequestModel, r.group.Mode, channel.Name, item.ModelName,
+			helper.MaskKeySuffix(usedKey.ChannelKey),
+			r.iter.Index()+1, r.iter.Len(), r.iter.IsSticky())
+
+		return &relayAttempt{
+			relayRun:   r,
+			outAdapter: outAdapter,
+			channel:    channel,
+			usedKey:    usedKey,
+		}, nil
 	}
 
-	outAdapter, err := newOutbound(channel.Type, r.internalRequest, channel.GetBaseUrl(), usedKey.ChannelKey)
-	if err != nil {
-		r.iter.Skip(channel.ID, usedKey.ID, channel.Name, err.Error())
-		return nil, nil
-	}
-
-	// set client model to the current candidate's actual upstream model on each attempt; retry will overwrite with next candidate.
-	r.internalRequest.Model = item.ModelName
-	r.metrics.ActualModel = item.ModelName
-	r.metrics.ParamOverride = ""
-	log.Debugf("forwarding to channel: model=%s mode=%d channel=%s upstream_model=%s key=%s (attempt %d/%d, sticky=%t)",
-		r.metrics.RequestModel, r.group.Mode, channel.Name, item.ModelName,
-		helper.MaskKeySuffix(usedKey.ChannelKey),
-		r.iter.Index()+1, r.iter.Len(), r.iter.IsSticky())
-
-	return &relayAttempt{
-		relayRun:   r,
-		outAdapter: outAdapter,
-		channel:    channel,
-		usedKey:    usedKey,
-	}, nil
+	r.iter.Skip(channel.ID, 0, channel.Name, "all keys circuit-broken")
+	return nil, nil
 }
 
 // run manages the complete lifecycle of a single channel attempt.
@@ -275,7 +251,7 @@ func (ra *relayAttempt) run() (bool, error) {
 		if errors.As(fwdErr, &rlErr) {
 			ra.rateLimitWait = rlErr.Wait
 		}
-		span.End(dbmodel.AttemptFailed, fwdErr.Error())
+		span.End(dbmodel.AttemptFailed, ra.failureMessage(fwdErr))
 		return false, fwdErr // written=false, 不进入 statusCode switch
 	}
 
@@ -284,57 +260,62 @@ func (ra *relayAttempt) run() (bool, error) {
 	switch statusCode {
 	case http.StatusBadRequest: // 400 — abort, no retry
 		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone})
-		span.End(dbmodel.AttemptFailed, fwdErr.Error())
+		span.End(dbmodel.AttemptFailed, ra.failureMessage(fwdErr))
 		resp.Error(ra.c, statusCode, fwdErr.Error())
 		return true, fmt.Errorf("channel %s bad request (400): %v", ra.channel.Name, fwdErr)
 
-	case http.StatusUnauthorized, http.StatusForbidden: // 401/403 — accumulate auth errors, disable key within 5min window
+	case http.StatusUnauthorized, http.StatusForbidden: // 401/403 — auth error, switch channel
 		latestKey := ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthFailure})
 		if latestKey.ID != 0 && !latestKey.Enabled {
 			log.Warnf("key %d disabled after %d consecutive auth errors (channel: %s)",
 				latestKey.ID, latestKey.ConsecutiveAuthErrors, ra.channel.Name)
 		}
-		span.End(dbmodel.AttemptFailed, fwdErr.Error())
+		span.End(dbmodel.AttemptFailed, ra.failureMessage(fwdErr))
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),
 			RequestFailed: 1,
 		})
 		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 		return ra.hasWrittenResponse(), fmt.Errorf("channel %s auth error (%d): %v", ra.channel.Name, statusCode, fwdErr)
+		// tryNextKey=false: 认证失败不应重试同渠道其他 key
 
-	case http.StatusTooManyRequests: // 429 — cool down this key
+	case http.StatusTooManyRequests: // 429 — cool down this key, try next key
 		update := op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone}
 		if ra.retryAfter > 0 {
 			update.RetryAfter = int64(ra.retryAfter.Seconds())
 		}
 		ra.applyKeyRuntimeUpdate(update)
-		// per-key-per-model 冷却：仅冷却当前 (key, model) 组合，不影响同 key 的其他模型
+		// per-key-per-model 冷却：仅冷却当前 (key, model) 组合，指数退避
 		dbmodel.RecordKeyModelCooldown(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.retryAfter)
-		span.End(dbmodel.AttemptFailed, fwdErr.Error())
+		span.End(dbmodel.AttemptFailed, ra.failureMessage(fwdErr))
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),
 			RequestFailed: 1,
 		})
+		ra.tryNextKey = true // 429 → 试同渠道下一个 key
 		return ra.hasWrittenResponse(), fmt.Errorf("channel %s rate limited (429): %v", ra.channel.Name, fwdErr)
 
 	case http.StatusNotFound: // 404 — switch channel
 		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone})
-		span.End(dbmodel.AttemptFailed, fwdErr.Error())
+		span.End(dbmodel.AttemptFailed, ra.failureMessage(fwdErr))
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),
 			RequestFailed: 1,
 		})
 		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 		return ra.hasWrittenResponse(), fmt.Errorf("channel %s not found (404): %v", ra.channel.Name, fwdErr)
+		// tryNextKey=false: 404 表示上游不支持此模型，切渠道
 
-	default: // 5xx/network error → circuit breaker
+	default: // 5xx/timeout/stream truncation → circuit break this key, try next key when possible
 		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone})
-		span.End(dbmodel.AttemptFailed, fwdErr.Error())
+		ra.applyTemporaryKeyCooldown()
+		span.End(dbmodel.AttemptFailed, ra.failureMessage(fwdErr))
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),
 			RequestFailed: 1,
 		})
 		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		ra.tryNextKey = true // 未写回客户端时，试同渠道下一个 key
 		return ra.hasWrittenResponse(), fmt.Errorf("channel %s failed: %v", ra.channel.Name, fwdErr)
 	}
 }
@@ -352,6 +333,35 @@ func (ra *relayAttempt) applyKeyRuntimeUpdate(update op.ChannelKeyRuntimeUpdate)
 		return dbmodel.ChannelKey{}
 	}
 	return key
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return b
+	}
+	return a
+}
+
+func streamPenalty(timeoutSec int, min time.Duration, multiplier time.Duration) time.Duration {
+	if timeoutSec <= 0 {
+		return min
+	}
+	return maxDuration(time.Duration(timeoutSec)*time.Second*multiplier, min)
+}
+
+func (ra *relayAttempt) applyTemporaryKeyCooldown() {
+	if ra.keyCooldown <= 0 {
+		return
+	}
+	dbmodel.RecordKeyModelTemporaryCooldown(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.keyCooldown)
+}
+
+func (ra *relayAttempt) failureMessage(err error) string {
+	msg := err.Error()
+	if ra.keyCooldown > 0 {
+		msg = fmt.Sprintf("%s; temporary key cooldown=%s", msg, ra.keyCooldown)
+	}
+	return msg
 }
 
 // parseRequest parses and validates the incoming request
@@ -705,14 +715,20 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			_ = clientStream.Close()
 			return nil
 		case <-firstTokenC:
+			ra.statusCode = http.StatusGatewayTimeout
+			ra.keyCooldown = streamPenalty(firstTokenTimeoutSec, 30*time.Second, 2)
 			log.Warnf("first token timeout (%ds), switching channel", firstTokenTimeoutSec)
 			_ = clientStream.Close()
 			return fmt.Errorf("first token timeout (%ds)", firstTokenTimeoutSec)
 		case <-streamHardC:
+			ra.statusCode = http.StatusGatewayTimeout
+			ra.keyCooldown = streamPenalty(streamHardTimeOutSec, 60*time.Second, 1)
 			log.Warnf("stream hard timeout (%ds), stopping stream", streamHardTimeOutSec)
 			_ = clientStream.Close()
 			return fmt.Errorf("stream hard timeout (%ds)", streamHardTimeOutSec)
 		case <-streamIdleC:
+			ra.statusCode = http.StatusGatewayTimeout
+			ra.keyCooldown = streamPenalty(streamIdleTimeOutSec, 60*time.Second, 2)
 			log.Warnf("stream idle timeout (%ds), stopping stream", streamIdleTimeOutSec)
 			_ = clientStream.Close()
 			return fmt.Errorf("stream idle timeout (%ds)", streamIdleTimeOutSec)
@@ -722,8 +738,6 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 				if len(responseEvents) == 0 {
 					return nil
 				}
-				// when client requests streaming, pipeline handles conversion on the fly and does not auto-generate a complete response body.
-				// reuse the same inbound aggregator to assemble already-written events into final body; log only the final response once.
 				responseBody, meta, err := ra.inAdapter.AggregateStreamChunks(context.WithoutCancel(ctx), responseEvents)
 				if err != nil {
 					log.Warnf("failed to aggregate stream response for log: %v", err)
@@ -735,6 +749,12 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 				return nil
 			}
 			if r.err != nil {
+				ra.statusCode = http.StatusBadGateway
+				if firstToken {
+					ra.keyCooldown = maxDuration(30*time.Second, ra.keyCooldown)
+				} else {
+					ra.keyCooldown = maxDuration(60*time.Second, ra.keyCooldown)
+				}
 				log.Warnf("failed to read event: %v", r.err)
 				return fmt.Errorf("failed to read stream event: %w", r.err)
 			}
@@ -744,11 +764,13 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			}
 			if firstToken {
 				if msg := successShapedError(r.event.Data); msg != "" {
+					ra.statusCode = http.StatusBadGateway
+					ra.keyCooldown = maxDuration(30*time.Second, ra.keyCooldown)
 					_ = clientStream.Close()
 					return fmt.Errorf("success-shaped upstream stream error: %s", msg)
 				}
 			}
-			// temporarily store pipeline-converted client-format events; aggregate into final response body for logging after normal completion; no per-chunk persistence.
+
 			responseEvents = append(responseEvents, r.event)
 			if firstToken {
 				ra.metrics.FirstTokenTime = time.Now()

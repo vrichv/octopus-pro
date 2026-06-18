@@ -138,20 +138,27 @@ func (c *Channel) GetBaseUrl() string {
 }
 
 func (c *Channel) GetChannelKey(modelName string) ChannelKey {
-	if c == nil || len(c.Keys) == 0 {
+	keys := c.GetChannelKeys(modelName)
+	if len(keys) == 0 {
 		return ChannelKey{}
+	}
+	return keys[0]
+}
+
+// GetChannelKeys returns all currently available keys in selection order.
+// KeyMode=1 keeps round-robin fairness by rotating the first candidate; the
+// remaining keys preserve the same relative order for relay to continue trying.
+func (c *Channel) GetChannelKeys(modelName string) []ChannelKey {
+	if c == nil || len(c.Keys) == 0 {
+		return nil
 	}
 
 	nowSec := time.Now().Unix()
-
-	// 筛选可用的 key（Enabled + 未在冷却中）
 	available := make([]ChannelKey, 0, len(c.Keys))
 	for _, k := range c.Keys {
 		if k.ChannelKey == "" {
 			continue
 		}
-
-		// 认证错误 5min 窗口重置：上次认证错误超过 5min，重置计数
 		if k.ConsecutiveAuthErrors > 0 && k.LastAuthErrorTime > 0 && nowSec-k.LastAuthErrorTime >= 300 {
 			k.ConsecutiveAuthErrors = 0
 			k.LastAuthErrorTime = 0
@@ -159,10 +166,6 @@ func (c *Channel) GetChannelKey(modelName string) ChannelKey {
 		if !k.Enabled {
 			continue
 		}
-
-		// 冷却判定：
-		// - 有 modelName（relay 场景）：使用 per-key-per-model 冷却跟踪，各模型独立
-		// - 无 modelName（fetch 场景）：回退 key 级 StatusCode 检查（向后兼容）
 		if modelName != "" {
 			if isKeyModelCooling(c.ID, k.ID, modelName) {
 				continue
@@ -178,29 +181,36 @@ func (c *Channel) GetChannelKey(modelName string) ChannelKey {
 		}
 		available = append(available, k)
 	}
-
 	if len(available) == 0 {
-		return ChannelKey{}
+		return nil
 	}
 
-	// KeyMode=1: RoundRobin 轮询
 	if c.KeyMode == 1 {
 		val, _ := keyRRIndex.LoadOrStore(c.ID, new(atomic.Int64))
 		idxPtr := val.(*atomic.Int64)
 		idx := int(idxPtr.Add(1)-1) % len(available)
-		return available[idx]
+		ordered := make([]ChannelKey, 0, len(available))
+		ordered = append(ordered, available[idx:]...)
+		ordered = append(ordered, available[:idx]...)
+		return ordered
 	}
 
-	// KeyMode=0: Cost 成本优先
-	best := available[0]
-	bestCost := best.TotalCost
-	for _, k := range available[1:] {
-		if k.TotalCost < bestCost {
-			best = k
-			bestCost = k.TotalCost
+	bestIdx := 0
+	bestCost := available[0].TotalCost
+	for i := 1; i < len(available); i++ {
+		if available[i].TotalCost < bestCost {
+			bestIdx = i
+			bestCost = available[i].TotalCost
 		}
 	}
-	return best
+	if bestIdx == 0 {
+		return available
+	}
+	ordered := make([]ChannelKey, 0, len(available))
+	ordered = append(ordered, available[bestIdx])
+	ordered = append(ordered, available[:bestIdx]...)
+	ordered = append(ordered, available[bestIdx+1:]...)
+	return ordered
 }
 
 // CleanupKeyRRIndex 清理 channel 的 RR 轮询索引（channel 删除时调用）。
@@ -208,18 +218,16 @@ func CleanupKeyRRIndex(channelID int) {
 	keyRRIndex.Delete(channelID)
 }
 
-// ---------------------------------------------------------------------------
-// Per-Key-Per-Model 429 Cooldown Tracker
-//
-// 每个 (channel, key, model) 组合独立跟踪 429 冷却状态，避免一个模型的 429 影响同 key
-// 下的其他模型。key 级别的 StatusCode 字段仍保留用于 UI 展示，路由决策使用本跟踪器。
-// ---------------------------------------------------------------------------
-
-// keyModelCooldownEntry 记录 (channel, key, model) 的冷却截止时间。
+// keyModelCooldownEntry 记录 (channel, key, model) 的冷却状态。
+// 429 使用指数退避；慢流/截断流使用临时冷却但不增加 consecutive429s。
 type keyModelCooldownEntry struct {
-	cooldownUntil time.Time // zero time 表示未冷却
-	mu            sync.Mutex
+	cooldownUntil   time.Time // zero = 当前未冷却（但历史计数可能仍保留）
+	lastPenaltyAt   time.Time // 最近一次 429 / 临时冷却的写入时间，用于计数器衰减清理
+	consecutive429s int       // 连续 429 次数，成功时重置
+	mu              sync.Mutex
 }
+
+const keyModelCooldownRetention = 30 * time.Minute
 
 // globalKeyModelCooldown 全局限流冷却映射表。
 // key 格式: "ch:{channelID}:k:{keyID}:m:{modelName}"
@@ -244,6 +252,7 @@ func getOrCreateCooldownEntry(key string) *keyModelCooldownEntry {
 }
 
 // ensureModelCooldownCleanup 启动后台 goroutine 定期清理过期条目。
+// 冷却结束后保留历史 30 分钟；若期间未再次触发 429 / 临时惩罚，则清除计数器。
 func ensureModelCooldownCleanup() {
 	keyModelCooldownOnce.Do(func() {
 		go func() {
@@ -254,10 +263,11 @@ func ensureModelCooldownCleanup() {
 				globalKeyModelCooldown.Range(func(key, value any) bool {
 					entry := value.(*keyModelCooldownEntry)
 					entry.mu.Lock()
-					if entry.cooldownUntil.IsZero() || now.After(entry.cooldownUntil) {
+					remove := entry.lastPenaltyAt.IsZero() || now.After(entry.lastPenaltyAt.Add(keyModelCooldownRetention))
+					entry.mu.Unlock()
+					if remove {
 						globalKeyModelCooldown.Delete(key)
 					}
-					entry.mu.Unlock()
 					return true
 				})
 			}
@@ -266,25 +276,63 @@ func ensureModelCooldownCleanup() {
 }
 
 // RecordKeyModelCooldown 记录指定 (key, model) 的 429 冷却。
+// 使用指数退避：连续 429 次数越多，冷却时间越长（上限 30 分钟）。
 // retryAfter 为 0 或负值时使用默认冷却（2 分钟 + keyID%60 抖动）。
-// 该函数导出给 relay 包在收到上游 429 时调用。
 func RecordKeyModelCooldown(channelID, keyID int, modelName string, retryAfter time.Duration) {
 	ensureModelCooldownCleanup()
 	key := modelCooldownKey(channelID, keyID, modelName)
 	entry := getOrCreateCooldownEntry(key)
+	now := time.Now()
 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
-	cooldown := retryAfter
-	if cooldown <= 0 {
-		// 默认冷却：2 分钟 + keyID % 60 秒抖动（防止所有 key 同时恢复）
-		cooldown = 2*time.Minute + time.Duration(keyID%60)*time.Second
+	if !entry.lastPenaltyAt.IsZero() && now.After(entry.lastPenaltyAt.Add(keyModelCooldownRetention)) {
+		entry.consecutive429s = 0
 	}
-	entry.cooldownUntil = time.Now().Add(cooldown)
+	entry.consecutive429s++
+	entry.lastPenaltyAt = now
+
+	base := retryAfter
+	if base <= 0 {
+		base = 2*time.Minute + time.Duration(keyID%60)*time.Second
+	}
+
+	cooldown := base
+	shifts := entry.consecutive429s - 1
+	if shifts > 0 {
+		if shifts > 20 {
+			shifts = 20
+		}
+		cooldown = base << shifts
+	}
+	if cooldown > keyModelCooldownRetention {
+		cooldown = keyModelCooldownRetention
+	}
+	entry.cooldownUntil = now.Add(cooldown)
 }
 
-// ClearKeyModelCooldown 清除指定 (key, model) 的冷却记录。
+// RecordKeyModelTemporaryCooldown applies a one-off cooldown without increasing
+// the consecutive429s penalty counter. Used for slow or truncated streams.
+func RecordKeyModelTemporaryCooldown(channelID, keyID int, modelName string, cooldown time.Duration) {
+	if cooldown <= 0 {
+		return
+	}
+	ensureModelCooldownCleanup()
+	key := modelCooldownKey(channelID, keyID, modelName)
+	entry := getOrCreateCooldownEntry(key)
+	now := time.Now()
+	until := now.Add(cooldown)
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	entry.lastPenaltyAt = now
+	if until.After(entry.cooldownUntil) {
+		entry.cooldownUntil = until
+	}
+}
+
+// ClearKeyModelCooldown 清除指定 (key, model) 的冷却记录（含退避计数器）。
 // 导出给 relay 包在请求成功时调用。
 func ClearKeyModelCooldown(channelID, keyID int, modelName string) {
 	key := modelCooldownKey(channelID, keyID, modelName)
@@ -292,7 +340,7 @@ func ClearKeyModelCooldown(channelID, keyID int, modelName string) {
 }
 
 // isKeyModelCooling 检查指定 (key, model) 是否处于冷却中。
-// 如果冷却已过期，自动重置并返回 false。
+// 冷却过期后仅清空当前冷却窗口；历史计数器保留至后台清理或成功请求。
 func isKeyModelCooling(channelID, keyID int, modelName string) bool {
 	key := modelCooldownKey(channelID, keyID, modelName)
 	v, ok := globalKeyModelCooldown.Load(key)
@@ -303,14 +351,11 @@ func isKeyModelCooling(channelID, keyID int, modelName string) bool {
 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
-
 	if entry.cooldownUntil.IsZero() {
-		// 已被其他路径重置为零值，直接删除死条目避免泄漏
-		globalKeyModelCooldown.Delete(key)
 		return false
 	}
 	if time.Now().After(entry.cooldownUntil) {
-		globalKeyModelCooldown.Delete(key) // 过期条目直接删除，而非仅重置
+		entry.cooldownUntil = time.Time{}
 		return false
 	}
 	return true
