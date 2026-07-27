@@ -15,6 +15,7 @@ type LogFields struct {
 	ChannelName string
 	KeyID       int
 	ProxyDesc   string
+	URL         string // 上游请求完整 URL，由调用方传入
 }
 
 // NewLogger creates a structured logging plugin.
@@ -34,16 +35,26 @@ func (m *loggerMiddleware) Name() string {
 	return "logger"
 }
 
+func (m *loggerMiddleware) OnOutboundRawRequest(ctx context.Context, request *httpclient.Request) (*httpclient.Request, error) {
+	m.fields.URL = request.URL
+	return request, nil
+}
+
 func (m *loggerMiddleware) OnOutboundRawResponse(ctx context.Context, response *httpclient.Response) (*httpclient.Response, error) {
 	if response == nil {
 		return nil, nil
 	}
 	if response.StatusCode >= http.StatusBadRequest {
-		log.Warnf("relay upstream error: channel=%s keyId=%d proxy=%s status=%d",
-			m.fields.ChannelName, m.fields.KeyID, m.fields.ProxyDesc, response.StatusCode)
+		if response.StatusCode == http.StatusTooManyRequests {
+			log.Debugf("relay upstream error: channel=%s keyId=%d proxy=%s url=%s status=%d",
+				m.fields.ChannelName, m.fields.KeyID, m.fields.ProxyDesc, m.fields.URL, response.StatusCode)
+		} else {
+			log.Warnf("relay upstream error: channel=%s keyId=%d proxy=%s url=%s status=%d",
+				m.fields.ChannelName, m.fields.KeyID, m.fields.ProxyDesc, m.fields.URL, response.StatusCode)
+		}
 	} else {
-		log.Infof("relay upstream response: channel=%s keyId=%d proxy=%s status=%d",
-			m.fields.ChannelName, m.fields.KeyID, m.fields.ProxyDesc, response.StatusCode)
+		log.Debugf("relay upstream response: channel=%s keyId=%d proxy=%s url=%s status=%d",
+			m.fields.ChannelName, m.fields.KeyID, m.fields.ProxyDesc, m.fields.URL, response.StatusCode)
 	}
 	return response, nil
 }
@@ -66,6 +77,11 @@ func LogUpstreamError(fields LogFields, err error) {
 		return
 	}
 
-	log.Warnf("relay upstream error: channel=%s keyId=%d proxy=%s err=%v",
-		fields.ChannelName, fields.KeyID, fields.ProxyDesc, err)
+	if errors.Is(err, ErrRateLimited) {
+		log.Debugf("relay upstream error: channel=%s keyId=%d proxy=%s url=%s err=%v",
+			fields.ChannelName, fields.KeyID, fields.ProxyDesc, fields.URL, err)
+		return
+	}
+	log.Warnf("relay upstream error: channel=%s keyId=%d proxy=%s url=%s err=%v",
+		fields.ChannelName, fields.KeyID, fields.ProxyDesc, fields.URL, err)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/looplj/axonhub/llm/transformer/openai"
 	"github.com/looplj/axonhub/llm/transformer/openai/responses"
 	"github.com/looplj/axonhub/llm/transformer/openrouter"
+	"github.com/looplj/axonhub/llm/transformer/xai"
 	dbmodel "github.com/vrichv/octopus-pro/internal/model"
 )
 
@@ -98,6 +99,8 @@ func newOutbound(channelType llm.APIFormat, request *llm.Request, baseURL, key s
 			return openrouter.NewOutboundTransformer(baseURL, key)
 		case dbmodel.ChannelTypeBailian:
 			return bailian.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeXAI:
+			return xai.NewOutboundTransformer(baseURL, key)
 		default:
 			return nil, fmt.Errorf("channel type %s is not compatible with %s request", channelType, requestType)
 		}

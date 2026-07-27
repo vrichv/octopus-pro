@@ -18,8 +18,9 @@ type Group struct {
 	UpstreamTimeOut   int         `json:"upstream_time_out"`    // 上游请求超时(秒)：覆盖pipeline.Process阶段，0为禁用
 	StreamIdleTimeOut int         `json:"stream_idle_time_out"` // 流空闲超时(秒)：流建立后两个事件之间的最大间隔，0为禁用
 	StreamHardTimeOut int         `json:"stream_hard_time_out"` // 流硬超时(秒)：流建立后的最大持续时间，0为禁用
-	SessionKeepTime   int         `json:"session_keep_time"`    // 会话保持时间(秒) 0 为禁用
-	Items             []GroupItem `json:"items,omitempty" gorm:"foreignKey:GroupID"`
+	SessionKeepTime       int         `json:"session_keep_time"`                        // 会话保持时间(秒) 0 为禁用
+	RateLimitRetryWaitMax *int        `json:"rate_limit_retry_wait_max"`                 // 限流重试等待上限(秒)，nil=默认120s，0=禁用
+	Items                 []GroupItem `json:"items,omitempty" gorm:"foreignKey:GroupID"`
 }
 
 type GroupItem struct {
@@ -42,6 +43,7 @@ type GroupUpdateRequest struct {
 	StreamIdleTimeOut *int                     `json:"stream_idle_time_out,omitempty"` // 流空闲超时(秒)
 	StreamHardTimeOut *int                     `json:"stream_hard_time_out,omitempty"` // 流硬超时(秒)
 	SessionKeepTime   *int                     `json:"session_keep_time,omitempty"`    // 仅在会话保持时间变更时发送(秒)
+	RateLimitRetryWaitMax *int                 `json:"rate_limit_retry_wait_max,omitempty"` // 限流重试等待上限(秒)
 	ItemsToAdd        []GroupItemAddRequest    `json:"items_to_add,omitempty"`         // 新增的 items
 	ItemsToUpdate     []GroupItemUpdateRequest `json:"items_to_update,omitempty"`      // 更新的 items (priority 变更)
 	ItemsToDelete     []int                    `json:"items_to_delete,omitempty"`      // 删除的 item IDs

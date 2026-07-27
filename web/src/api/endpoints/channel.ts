@@ -16,6 +16,7 @@ export enum ChannelType {
     DeepSeek = 'deepseek/chat_completions',
     OpenRouter = 'openrouter/chat_completions',
     Bailian = 'bailian/chat_completions',
+    XAI = 'xai',
 }
 
 /**
@@ -73,7 +74,10 @@ export type Channel = {
    rate_limit: string;
    model_rate_limit: string;
    key_mode: number;
-    stats: StatsChannel;
+   circuit_breaker_threshold?: number | null;
+   circuit_breaker_cooldown?: number | null;
+   circuit_breaker_max_cooldown?: number | null;
+   stats: StatsChannel;
 };
 
 // Internal type: backend may return null for slice fields; normalize to [] in select()
@@ -105,6 +109,9 @@ export type CreateChannelRequest = {
     rate_limit?: string;
     model_rate_limit?: string;
     key_mode?: number;
+    circuit_breaker_threshold?: number | null;
+    circuit_breaker_cooldown?: number | null;
+    circuit_breaker_max_cooldown?: number | null;
 };
 
 /**
@@ -129,6 +136,9 @@ export type UpdateChannelRequest = {
     rate_limit?: string;
     model_rate_limit?: string;
     key_mode?: number;
+    circuit_breaker_threshold?: number | null;
+    circuit_breaker_cooldown?: number | null;
+    circuit_breaker_max_cooldown?: number | null;
     // keys diff
     keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark' | 'key_proxy'>>;
     keys_to_update?: Array<{ id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy?: string }>;
@@ -377,5 +387,69 @@ export function useSyncChannel() {
         onError: (error) => {
             logger.error('渠道同步失败:', error);
         },
+    });
+}
+
+/**
+ * 调度状态 API 类型
+ */
+export type CircuitBreakerStatus = {
+    state: 'closed' | 'open' | 'half_open';
+    consecutive_failures: number;
+    trip_count: number;
+    cooldown_remaining_sec: number;
+};
+
+export type RateLimiterStatus = {
+    count: number;
+    interval: string;
+    used: number;
+    remaining: number;
+};
+
+export type CooldownStatus = {
+    active: boolean;
+    consecutive_429s: number;
+    cooldown_until: string | null;
+};
+
+export type ModelStatusEntry = {
+    model: string;
+    circuit_breaker: CircuitBreakerStatus;
+    rate_limit: {
+        key_limit?: RateLimiterStatus;
+        model_limit?: RateLimiterStatus;
+    };
+    cooldown: CooldownStatus;
+};
+
+export type KeyStatusEntry = {
+    key_id: number;
+    key_suffix: string;
+    models: ModelStatusEntry[];
+};
+
+export type SchedulingStatusResponse = {
+    channel_id: number;
+    keys: KeyStatusEntry[];
+};
+
+/**
+ * 获取渠道调度状态 Hook
+ *
+ * @example
+ * const { data: status } = useSchedulingStatus(channelId);
+ */
+export function useSchedulingStatus(channelId: number | null) {
+    return useQuery({
+        queryKey: ['channels', 'scheduling-status', channelId],
+        queryFn: async () => {
+            const res = await apiClient.get<SchedulingStatusResponse>(
+                `/api/v1/channel/${channelId}/scheduling-status`
+            );
+            return res;
+        },
+        enabled: channelId != null,
+        refetchInterval: 10_000, // auto-refresh every 10s
     });
 }

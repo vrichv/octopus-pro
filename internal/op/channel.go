@@ -327,6 +327,18 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 		selectFields = append(selectFields, "key_mode")
 		updates.KeyMode = *req.KeyMode
 	}
+	if req.CircuitBreakerThreshold != nil {
+		selectFields = append(selectFields, "circuit_breaker_threshold")
+		updates.CircuitBreakerThreshold = req.CircuitBreakerThreshold
+	}
+	if req.CircuitBreakerCooldown != nil {
+		selectFields = append(selectFields, "circuit_breaker_cooldown")
+		updates.CircuitBreakerCooldown = req.CircuitBreakerCooldown
+	}
+	if req.CircuitBreakerMaxCooldown != nil {
+		selectFields = append(selectFields, "circuit_breaker_max_cooldown")
+		updates.CircuitBreakerMaxCooldown = req.CircuitBreakerMaxCooldown
+	}
 
 	// 只有当有字段需要更新时才执行 UPDATE
 	if len(selectFields) > 0 {
@@ -506,6 +518,15 @@ func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
 }
 
 func ChannelGet(id int, ctx context.Context) (*model.Channel, error) {
+	channel, ok := channelCache.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("channel not found")
+	}
+	return &channel, nil
+}
+
+// ChannelGetByID 从缓存中获取 channel（不查 DB），用于性能敏感路径。
+func ChannelGetByID(id int) (*model.Channel, error) {
 	channel, ok := channelCache.Get(id)
 	if !ok {
 		return nil, fmt.Errorf("channel not found")

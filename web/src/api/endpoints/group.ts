@@ -37,6 +37,7 @@ export interface Group {
     stream_idle_time_out?: number;
     stream_hard_time_out?: number;
     session_keep_time?: number;
+    rate_limit_retry_wait_max?: number | null;
     items?: GroupItem[];
 }
 
@@ -72,6 +73,7 @@ export interface GroupUpdateRequest {
     stream_idle_time_out?: number;       // 仅在流空闲超时变更时发送
     stream_hard_time_out?: number;       // 仅在流硬超时变更时发送
     session_keep_time?: number;           // 仅在会话保持时间变更时发送
+    rate_limit_retry_wait_max?: number | null; // 限流重试等待上限变更时发送
     items_to_add?: GroupItemAddRequest[];    // 新增的 items
     items_to_update?: GroupItemUpdateRequest[]; // 更新的 items (priority 变更)
     items_to_delete?: number[];              // 删除的 item IDs

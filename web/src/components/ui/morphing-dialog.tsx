@@ -17,8 +17,8 @@ import {
   Variant,
 } from 'motion/react';
 import { createPortal } from 'react-dom';
-import { cn } from '@/lib/utils';
 import { XIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import useClickOutside from '@/hooks/useClickOutside';
 
 export type MorphingDialogContextType = {
@@ -26,6 +26,8 @@ export type MorphingDialogContextType = {
   setIsOpen: React.Dispatch<React.SetStateAction<boolean>>;
   uniqueId: string;
   triggerRef: React.RefObject<HTMLDivElement | null>;
+  /** Ref — does NOT trigger re-renders. Set to true when the dialog has unsaved changes. */
+  dirtyRef: React.MutableRefObject<boolean>;
 };
 
 const MorphingDialogContext =
@@ -53,6 +55,7 @@ function MorphingDialogProvider({
   const [isOpen, setIsOpen] = useState(false);
   const uniqueId = useId();
   const triggerRef = useRef<HTMLDivElement>(null!);
+  const dirtyRef = useRef(false);
 
   const contextValue = useMemo(
     () => ({
@@ -60,6 +63,7 @@ function MorphingDialogProvider({
       setIsOpen,
       uniqueId,
       triggerRef,
+      dirtyRef,
     }),
     [isOpen, uniqueId]
   );
@@ -78,8 +82,8 @@ export type MorphingDialogProps = {
 
 function MorphingDialog({ children, transition }: MorphingDialogProps) {
   return (
-    <MorphingDialogProvider>
-      <MotionConfig transition={transition}>{children}</MotionConfig>
+    <MorphingDialogProvider transition={transition}>
+      {children}
     </MorphingDialogProvider>
   );
 }
@@ -100,23 +104,21 @@ function MorphingDialogTrigger({
   const { setIsOpen, isOpen, uniqueId, triggerRef } = useMorphingDialog();
 
   const handleClick = useCallback(() => {
-    setIsOpen(!isOpen);
-  }, [isOpen, setIsOpen]);
+    setIsOpen((open) => !open);
+  }, [setIsOpen]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        setIsOpen(!isOpen);
+        setIsOpen((open) => !open);
       }
     },
-    [isOpen, setIsOpen]
+    [setIsOpen]
   );
 
-  // Important: when dialog is open, framer-motion shared-layout can temporarily
-  // "flash" the trigger back into its original position during internal re-layouts.
-  // To make this robust, we render a non-motion placeholder (still in layout flow)
-  // instead of the motion trigger while open.
+  // When open, shared-layout can flash the trigger back into place during
+  // internal re-layouts. Keep a non-motion placeholder in flow instead.
   if (isOpen) {
     return (
       <div
@@ -161,14 +163,31 @@ function MorphingDialogContent({
   className,
   style,
 }: MorphingDialogContentProps) {
-  const { setIsOpen, isOpen, uniqueId, triggerRef } = useMorphingDialog();
+  const { setIsOpen, isOpen, dirtyRef, uniqueId, triggerRef } = useMorphingDialog();
   const containerRef = useRef<HTMLDivElement>(null!);
   const firstFocusableElementRef = useRef<HTMLElement | null>(null);
   const lastFocusableElementRef = useRef<HTMLElement | null>(null);
 
+  const handleOutsideClick = useCallback(() => {
+    if (!isOpen) return;
+    // Dirty = has unsaved changes. Block outside click silently.
+    if (dirtyRef.current) return;
+    setIsOpen(false);
+  }, [dirtyRef, isOpen, setIsOpen]);
+
+  const shouldIgnoreOutsideClick = useCallback((event: Event) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('[data-slot="select-content"]')) return true;
+    if (document.querySelector('[data-slot="select-content"]')) return true;
+    if (target?.closest('[data-slot="popover-content"]')) return true;
+    if (document.querySelector('[data-slot="popover-content"]')) return true;
+    return false;
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        if (dirtyRef.current) return;
         setIsOpen(false);
       }
       if (event.key === 'Tab') {
@@ -193,7 +212,7 @@ function MorphingDialogContent({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [setIsOpen]);
+  }, [dirtyRef, setIsOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -212,33 +231,10 @@ function MorphingDialogContent({
     }
   }, [isOpen, triggerRef]);
 
-  useClickOutside(
-    containerRef,
-    () => {
-      if (isOpen) {
-        setIsOpen(false);
-      }
-    },
-    (event) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest('[data-slot="select-content"]')) {
-        return true;
-      }
-      const openSelectContent = document.querySelector('[data-slot="select-content"]');
-      if (openSelectContent) {
-        return true;
-      }
-      if (target?.closest('[data-slot="popover-content"]')) {
-        return true;
-      }
-      const openPopoverContent = document.querySelector('[data-slot="popover-content"]');
-      if (openPopoverContent) {
-        return true;
-      }
-      return false;
-    }
-  );
+  useClickOutside(containerRef, handleOutsideClick, shouldIgnoreOutsideClick);
 
+  // Sole owner of `dialog-${uniqueId}` while open. Trigger drops its layoutId
+  // when open; Container must never take the same id or shared-layout collapses.
   return (
     <motion.div
       ref={containerRef}
@@ -266,7 +262,7 @@ function MorphingDialogContainer({ children }: MorphingDialogContainerProps) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    // Schedule state update for next tick to avoid synchronous update warning
+    // Next tick avoids synchronous setState-in-effect warnings during SSR hydrate.
     const timer = setTimeout(() => setMounted(true), 0);
     return () => {
       clearTimeout(timer);
@@ -282,12 +278,15 @@ function MorphingDialogContainer({ children }: MorphingDialogContainerProps) {
         <>
           <motion.div
             key={`backdrop-${uniqueId}`}
-            className='fixed inset-0 h-full w-full bg-white/40 backdrop-blur-xs dark:bg-black/40 z-50'
+            className='fixed inset-0 z-50 h-full w-full bg-white/40 backdrop-blur-xs dark:bg-black/40'
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           />
-          <div className='fixed inset-0 z-50 flex items-center justify-center'>
+          <div
+            className='fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8'
+            id={`motion-ui-morphing-dialog-content-${uniqueId}`}
+          >
             {children}
           </div>
         </>
@@ -316,6 +315,7 @@ function MorphingDialogTitle({
       className={className}
       style={style}
       layout
+      id={`motion-ui-morphing-dialog-title-${uniqueId}`}
     >
       {children}
     </motion.div>
@@ -333,12 +333,9 @@ function MorphingDialogSubtitle({
   className,
   style,
 }: MorphingDialogSubtitleProps) {
-  const { uniqueId } = useMorphingDialog();
-
   return (
     <motion.div
-      layoutId={`dialog-subtitle-container-${uniqueId}`}
-      className={className}
+      className={cn('text-sm text-muted-foreground', className)}
       style={style}
     >
       {children}
@@ -349,12 +346,13 @@ function MorphingDialogSubtitle({
 export type MorphingDialogDescriptionProps = {
   children: React.ReactNode;
   className?: string;
-  disableLayoutAnimation?: boolean;
   variants?: {
     initial: Variant;
     animate: Variant;
     exit: Variant;
   };
+  disableLayoutAnimation?: boolean;
+  style?: React.CSSProperties;
 };
 
 function MorphingDialogDescription({
@@ -362,6 +360,7 @@ function MorphingDialogDescription({
   className,
   variants,
   disableLayoutAnimation,
+  style,
 }: MorphingDialogDescriptionProps) {
   const { uniqueId } = useMorphingDialog();
 
@@ -373,12 +372,14 @@ function MorphingDialogDescription({
           ? undefined
           : `dialog-description-content-${uniqueId}`
       }
+      id={`motion-ui-morphing-dialog-description-${uniqueId}`}
       variants={variants}
       className={className}
+      style={style}
+      transition={{ delay: 0.1 }}
       initial='initial'
       animate='animate'
       exit='exit'
-      id={`dialog-description-${uniqueId}`}
     >
       {children}
     </motion.div>
@@ -398,14 +399,11 @@ function MorphingDialogImage({
   className,
   style,
 }: MorphingDialogImageProps) {
-  const { uniqueId } = useMorphingDialog();
-
   return (
     <motion.img
       src={src}
       alt={alt}
-      className={cn(className)}
-      layoutId={`dialog-img-${uniqueId}`}
+      className={cn('rounded-2xl', className)}
       style={style}
     />
   );
@@ -426,11 +424,12 @@ function MorphingDialogClose({
   className,
   variants,
 }: MorphingDialogCloseProps) {
-  const { setIsOpen, uniqueId } = useMorphingDialog();
+  const { setIsOpen, uniqueId, dirtyRef } = useMorphingDialog();
 
   const handleClose = useCallback(() => {
+    dirtyRef.current = false;
     setIsOpen(false);
-  }, [setIsOpen]);
+  }, [dirtyRef, setIsOpen]);
 
   return (
     <motion.button

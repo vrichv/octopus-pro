@@ -46,7 +46,7 @@ func getOrCreateEntry(key string) *circuitEntry {
 	return actual.(*circuitEntry)
 }
 
-// getThreshold 获取熔断阈值配置
+// getThreshold 获取熔断阈值配置（全局默认）
 func getThreshold() int64 {
 	v, err := op.SettingGetInt(model.SettingKeyCircuitBreakerThreshold)
 	if err != nil || v <= 0 {
@@ -55,8 +55,17 @@ func getThreshold() int64 {
 	return int64(v)
 }
 
-// GetCooldown 获取当前冷却时间（带指数退避）
-func GetCooldown(tripCount int) time.Duration {
+// getThresholdForChannel 获取熔断阈值，优先使用 channel 级覆盖，否则回退全局。
+func getThresholdForChannel(channelID int) int64 {
+	ch, err := op.ChannelGetByID(channelID)
+	if err == nil && ch.CircuitBreakerThreshold != nil && *ch.CircuitBreakerThreshold > 0 {
+		return int64(*ch.CircuitBreakerThreshold)
+	}
+	return getThreshold()
+}
+
+// getCooldown 获取当前冷却时间（带指数退避），使用全局默认值。
+func getCooldown(tripCount int) time.Duration {
 	base, err := op.SettingGetInt(model.SettingKeyCircuitBreakerCooldown)
 	if err != nil || base <= 0 {
 		base = 60
@@ -65,12 +74,44 @@ func GetCooldown(tripCount int) time.Duration {
 	if err != nil || maxCooldown <= 0 {
 		maxCooldown = 600
 	}
+	return computeCooldown(tripCount, base, maxCooldown)
+}
 
-	// 指数退避：baseCooldown * 2^(tripCount-1)
+// GetCooldownForChannel 获取当前冷却时间，优先使用 channel 级覆盖，否则回退全局。
+func GetCooldownForChannel(channelID, tripCount int) time.Duration {
+	ch, err := op.ChannelGetByID(channelID)
+	base := 0
+	maxCooldown := 0
+	if err == nil {
+		if ch.CircuitBreakerCooldown != nil && *ch.CircuitBreakerCooldown > 0 {
+			base = *ch.CircuitBreakerCooldown
+		}
+		if ch.CircuitBreakerMaxCooldown != nil && *ch.CircuitBreakerMaxCooldown > 0 {
+			maxCooldown = *ch.CircuitBreakerMaxCooldown
+		}
+	}
+	if base == 0 {
+		v, _ := op.SettingGetInt(model.SettingKeyCircuitBreakerCooldown)
+		base = v
+	}
+	if base <= 0 {
+		base = 60
+	}
+	if maxCooldown == 0 {
+		v, _ := op.SettingGetInt(model.SettingKeyCircuitBreakerMaxCooldown)
+		maxCooldown = v
+	}
+	if maxCooldown <= 0 {
+		maxCooldown = 600
+	}
+	return computeCooldown(tripCount, base, maxCooldown)
+}
+
+func computeCooldown(tripCount, base, maxCooldown int) time.Duration {
 	cooldown := base
 	if tripCount > 1 {
 		shift := tripCount - 1
-		if shift > 20 { // 防止溢出
+		if shift > 20 {
 			shift = 20
 		}
 		cooldown = base << shift
@@ -78,7 +119,6 @@ func GetCooldown(tripCount int) time.Duration {
 	if cooldown > maxCooldown {
 		cooldown = maxCooldown
 	}
-
 	return time.Duration(cooldown) * time.Second
 }
 
@@ -100,7 +140,7 @@ func IsTripped(channelID, keyID int, modelName string) (tripped bool, remaining 
 		return false, 0
 
 	case StateOpen:
-		cooldown := GetCooldown(entry.TripCount)
+		cooldown := GetCooldownForChannel(channelID, entry.TripCount)
 		elapsed := time.Since(entry.LastFailureTime)
 		if elapsed >= cooldown {
 			entry.State = StateHalfOpen
@@ -154,12 +194,12 @@ func RecordFailure(channelID, keyID int, modelName string) {
 	switch entry.State {
 	case StateClosed:
 		entry.ConsecutiveFailures++
-		threshold := getThreshold()
+		threshold := getThresholdForChannel(channelID)
 		if entry.ConsecutiveFailures >= threshold {
 			entry.State = StateOpen
 			entry.TripCount++
 			log.Warnf("circuit breaker [%s] Closed -> Open (failures=%d >= threshold=%d, tripCount=%d, cooldown=%v)",
-				key, entry.ConsecutiveFailures, threshold, entry.TripCount, GetCooldown(entry.TripCount))
+				key, entry.ConsecutiveFailures, threshold, entry.TripCount, GetCooldownForChannel(channelID, entry.TripCount))
 		}
 
 	case StateHalfOpen:
@@ -168,10 +208,53 @@ func RecordFailure(channelID, keyID int, modelName string) {
 		entry.TripCount++
 		entry.ConsecutiveFailures = 0 // 重新开始计数
 		log.Warnf("circuit breaker [%s] HalfOpen -> Open (probe failed, tripCount=%d, cooldown=%v)",
-			key, entry.TripCount, GetCooldown(entry.TripCount))
+			key, entry.TripCount, GetCooldownForChannel(channelID, entry.TripCount))
 
 	case StateOpen:
 		// 理论上不应该在 Open 状态下接收到失败记录（请求应被拒绝），
 		// 但为安全起见仍更新失败时间
 	}
+}
+
+// CircuitBreakerStatus 用于 API 查询的熔断器状态快照。
+type CircuitBreakerStatus struct {
+	State               string `json:"state"`
+	ConsecutiveFailures int64  `json:"consecutive_failures"`
+	TripCount           int    `json:"trip_count"`
+	CooldownRemaining   int    `json:"cooldown_remaining_sec"`
+}
+
+// GetCircuitBreakerStatus 返回指定 (channel, key, model) 的熔断器当前状态。
+// 若无记录则返回 Closed 状态。
+func GetCircuitBreakerStatus(channelID, keyID int, modelName string) CircuitBreakerStatus {
+	key := circuitKey(channelID, keyID, modelName)
+	v, ok := globalBreaker.Load(key)
+	if !ok {
+		return CircuitBreakerStatus{State: "closed"}
+	}
+	entry := v.(*circuitEntry)
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	status := CircuitBreakerStatus{
+		ConsecutiveFailures: entry.ConsecutiveFailures,
+		TripCount:           entry.TripCount,
+	}
+
+	switch entry.State {
+	case StateClosed:
+		status.State = "closed"
+	case StateOpen:
+		status.State = "open"
+		cooldown := GetCooldownForChannel(channelID, entry.TripCount)
+		elapsed := time.Since(entry.LastFailureTime)
+		if remaining := cooldown - elapsed; remaining > 0 {
+			status.CooldownRemaining = int(remaining.Seconds())
+		}
+	case StateHalfOpen:
+		status.State = "half_open"
+	}
+
+	return status
 }

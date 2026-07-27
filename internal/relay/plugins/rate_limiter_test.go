@@ -149,8 +149,8 @@ func TestNewRateLimiterMiddleware(t *testing.T) {
 	if !ok {
 		t.Fatal("unexpected type")
 	}
-	if rlM.limitKey == "" {
-		t.Fatal("expected non-empty limitKey")
+	if len(rlM.checks) == 0 || rlM.checks[0].key == "" {
+		t.Fatal("expected non-empty limitKey in checks")
 	}
 }
 
@@ -210,6 +210,80 @@ func TestModelRateLimitMiddleware(t *testing.T) {
 	_, err = m2.OnOutboundRawRequest(ctx, req)
 	if err != nil {
 		t.Errorf("different model should not be limited: %v", err)
+	}
+}
+
+// TestDualLayerRateLimiter verifies that when both model_rate_limit and
+// rate_limit are configured, BOTH limits apply independently (B1 fix).
+// Previously model_rate_limit silently overrode rate_limit.
+func TestDualLayerRateLimiter(t *testing.T) {
+	ch := &model.Channel{
+		ID:             9001,
+		RateLimit:      "10/1s",       // key-level: 10 req/s
+		ModelRateLimit: "gpt-4=1/1s",  // model-level: 1 req/s for gpt-4
+	}
+	m := NewRateLimiter(ch, 42, "gpt-4").(*rateLimiterMiddleware)
+
+	// Both checks should be present
+	if len(m.checks) != 2 {
+		t.Fatalf("expected 2 checks (model + key), got %d", len(m.checks))
+	}
+	// model-level key should be ch:9001:m:gpt-4
+	if m.checks[0].key != "ch:9001:m:gpt-4" {
+		t.Errorf("expected model-level key, got %s", m.checks[0].key)
+	}
+	// key-level key should be ch:9001:k:42
+	if m.checks[1].key != "ch:9001:k:42" {
+		t.Errorf("expected key-level key, got %s", m.checks[1].key)
+	}
+
+	req := &httpclient.Request{}
+	ctx := context.Background()
+
+	// First request passes both limits
+	_, err := m.OnOutboundRawRequest(ctx, req)
+	if err != nil {
+		t.Fatalf("first request should pass: %v", err)
+	}
+
+	// Second request should be blocked by model-level (1/1s)
+	_, err = m.OnOutboundRawRequest(ctx, req)
+	if err == nil {
+		t.Fatal("second request should be blocked by model-level limit")
+	}
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("expected ErrRateLimited, got %v", err)
+	}
+}
+
+// TestKeyLimitStillAppliesWithoutModelLimit verifies key-level limit works
+// when no model_rate_limit is configured for the requested model.
+func TestKeyLimitStillAppliesWithoutModelLimit(t *testing.T) {
+	ch := &model.Channel{
+		ID:             9002,
+		RateLimit:      "1/1s",
+		ModelRateLimit: "gpt-4=1/1s",
+	}
+	// claude-3 is not in model_rate_limit, so only key-level should apply
+	m := NewRateLimiter(ch, 42, "claude-3").(*rateLimiterMiddleware)
+
+	if len(m.checks) != 1 {
+		t.Fatalf("expected 1 check (key only), got %d", len(m.checks))
+	}
+	if m.checks[0].key != "ch:9002:k:42" {
+		t.Errorf("expected key-level key, got %s", m.checks[0].key)
+	}
+
+	req := &httpclient.Request{}
+	ctx := context.Background()
+
+	_, err := m.OnOutboundRawRequest(ctx, req)
+	if err != nil {
+		t.Fatalf("first request should pass: %v", err)
+	}
+	_, err = m.OnOutboundRawRequest(ctx, req)
+	if err == nil {
+		t.Fatal("second request should be blocked by key-level limit")
 	}
 }
 

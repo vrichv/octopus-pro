@@ -22,6 +22,7 @@ PROVIDERS = [
     "zhipuai",     # GLM 系列
     "minimax",     # MiniMax 系列
     "moonshotai",  # Kimi/Moonshot
+    "xiaomi",      # 小米/Xiaomi 系列 (MiMo)
     "v0",          # v0 系列
 ]
 

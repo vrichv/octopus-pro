@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -102,52 +103,99 @@ func (r *relayRun) run() {
 	ctx := r.c.Request.Context()
 	var lastErr error
 
-	for r.iter.Next() {
-		for {
-			select {
-			case <-ctx.Done():
-				log.Debugf("request context canceled, stopping retry")
-				r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
-				return
-			default:
-			}
+	// Round-based retry: round 0 tries all channels/keys; if every error was
+	// transient (no 400/401/403/404), wait for the shortest rate-limit window
+	// and retry once to give the rate limiter a chance to open a slot.
+	for round := 0; round <= 1; round++ {
+		if round > 0 {
+			r.iter.Reset()
+			lastErr = nil
+		}
 
-			attempt, err := r.prepareAttempt()
-			if err != nil {
-				lastErr = err
-				break // channel-level error → next channel
-			}
-			if attempt == nil {
-				break // no more available keys in this channel
-			}
+		hadHardError := false
+		var minWait time.Duration
 
-			written, err := attempt.run()
-			if err == nil {
-				r.metrics.Save(ctx, true, nil, r.iter.Attempts())
-				return
-			}
-			if written {
-				r.metrics.Save(ctx, false, err, r.iter.Attempts())
-				return
-			}
-			lastErr = err
-
-			// 本地限流：自身控制的速度，等待窗口后重试本 key
-			if attempt.rateLimited {
+		for r.iter.Next() {
+		channelLoop:
+			for {
 				select {
-				case <-time.After(attempt.rateLimitWait):
-					continue
 				case <-ctx.Done():
+					log.Debugf("request context canceled, stopping retry")
 					r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
 					return
+				default:
 				}
-			}
 
-			if attempt.tryNextKey {
-				continue // 试同渠道下一个 key
+				attempt, err := r.prepareAttempt()
+				if err != nil {
+					lastErr = err
+					break channelLoop // channel-level error → next channel
+				}
+				if attempt == nil {
+					break channelLoop // no more available keys in this channel
+				}
+
+				written, err := attempt.run()
+				if err == nil {
+					r.metrics.Save(ctx, true, nil, r.iter.Attempts())
+					return
+				}
+				if written {
+					r.metrics.Save(ctx, false, err, r.iter.Attempts())
+					return
+				}
+				lastErr = err
+
+				// 本地限流：不阻塞等待，记录最小等待时间，立即试下一 key
+				// 同渠道所有 key 共享同一个 model 级限流器，快速失败后切下一渠道
+				if attempt.rateLimited {
+					if minWait == 0 || attempt.rateLimitWait < minWait {
+						minWait = attempt.rateLimitWait
+					}
+					// 冷却当前 key 使 prepareAttempt 跳过它，避免同一 key 无限循环
+					dbmodel.RecordKeyModelTemporaryCooldown(attempt.channel.ID, attempt.usedKey.ID,
+						attempt.internalRequest.Model, attempt.rateLimitWait)
+					continue
+				}
+
+				// 非本地限流：包含上游 429、5xx、超时等可重试错误，
+				// 以及 400/401/403/404 等不可重试错误。
+				// 只有不可重试错误才标记 hadHardError。
+				if attempt.tryNextKey {
+					// 429 / 5xx / 超时 — 可重试，继续试同渠道下一 key
+					// 捕获上游 Retry-After 用于 round 级等待
+					if attempt.retryAfter > 0 && (minWait == 0 || attempt.retryAfter < minWait) {
+						minWait = attempt.retryAfter
+					}
+					continue
+				}
+
+				// 400 / 401/403 / 404 / 已写回响应 — 不可重试
+				hadHardError = true
+				break channelLoop
 			}
-			break // 切下一渠道
 		}
+
+		// 第一轮全部为可重试错误（含限流）且存在限流等待时间 → 等待后重试
+		retryWaitMax := 2 * time.Minute // default
+		if r.group.RateLimitRetryWaitMax != nil {
+			if *r.group.RateLimitRetryWaitMax == 0 {
+				// 0 = disabled
+				break
+			}
+			retryWaitMax = time.Duration(*r.group.RateLimitRetryWaitMax) * time.Second
+		}
+		if round == 0 && !hadHardError && minWait > 0 && minWait <= retryWaitMax {
+			log.Infof("all channels retryable (transient errors), waiting %v before retry (max %v)", minWait, retryWaitMax)
+			select {
+			case <-time.After(minWait):
+				continue
+			case <-ctx.Done():
+				r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
+				return
+			}
+		}
+		break
 	}
 
 	if lastErr == nil {
@@ -169,6 +217,19 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 		r.iter.Skip(channel.ID, 0, channel.Name, "channel disabled")
 		return nil, nil
 	}
+
+	// === 上下文窗口预检查：若模型有 MaxContext 且输入估算超出，跳过整个 channel ===
+	if maxCtx := lookupModelMaxContext(item.ModelName); maxCtx > 0 {
+		estTotal := estimateTotalTokens(r.internalRequest)
+		if estTotal > maxCtx {
+			log.Debugf("context window skip: channel=%s model=%s est_total=%d max_context=%d",
+				channel.Name, item.ModelName, estTotal, maxCtx)
+			r.iter.Skip(channel.ID, 0, channel.Name,
+				fmt.Sprintf("estimated tokens %d exceeds context window %d", estTotal, maxCtx))
+			return nil, nil
+		}
+	}
+	// === 检查结束 ===
 	orderedKeys := channel.GetChannelKeys(item.ModelName)
 	if len(orderedKeys) == 0 {
 		r.iter.Skip(channel.ID, 0, channel.Name, "no available key")
@@ -189,10 +250,12 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 		r.internalRequest.Model = item.ModelName
 		r.metrics.ActualModel = item.ModelName
 		r.metrics.ParamOverride = ""
-		log.Debugf("forwarding to channel: model=%s mode=%d channel=%s upstream_model=%s key=%s (attempt %d/%d, sticky=%t)",
-			r.metrics.RequestModel, r.group.Mode, channel.Name, item.ModelName,
-			helper.MaskKeySuffix(usedKey.ChannelKey),
-			r.iter.Index()+1, r.iter.Len(), r.iter.IsSticky())
+		if r.iter.Index() == 0 {
+			log.Debugf("forwarding to channel: model=%s mode=%d channel=%s upstream_model=%s key=%s (attempt %d/%d, sticky=%t)",
+				r.metrics.RequestModel, r.group.Mode, channel.Name, item.ModelName,
+				helper.MaskKeySuffix(usedKey.ChannelKey),
+				r.iter.Index()+1, r.iter.Len(), r.iter.IsSticky())
+		}
 
 		return &relayAttempt{
 			relayRun:   r,
@@ -364,6 +427,37 @@ func (ra *relayAttempt) failureMessage(err error) string {
 	return msg
 }
 
+// lookupModelMaxContext 查询模型的 MaxContext，0 表示未知/不限制。
+func lookupModelMaxContext(modelName string) int {
+	price, err := op.LLMGet(modelName)
+	if err != nil {
+		return 0
+	}
+	return price.MaxContext
+}
+
+// estimateTotalTokens 从原始请求体粗略估算总 token 消耗（输入 + 输出预算）。
+// 用 len(body)/3 做粗略估算（约 3 bytes/token），偏向高估以降低溢出风险。
+// 输出预算取 client 的 max_tokens / max_completion_tokens，没有则默认 4096。
+func estimateTotalTokens(req *llm.Request) int {
+	bodySize := 0
+	if req.RawRequest != nil {
+		bodySize = len(req.RawRequest.Body)
+	}
+	if bodySize == 0 {
+		return 0 // 无法估算，放行
+	}
+	inputEst := bodySize / 3
+
+	outputBudget := 4096
+	if req.MaxTokens != nil && *req.MaxTokens > 0 {
+		outputBudget = int(*req.MaxTokens)
+	} else if req.MaxCompletionTokens != nil && *req.MaxCompletionTokens > 0 {
+		outputBudget = int(*req.MaxCompletionTokens)
+	}
+	return inputEst + outputBudget
+}
+
 // parseRequest parses and validates the incoming request
 func parseRequest(c *gin.Context, inboundType llm.APIFormat, inAdapter transformer.Inbound) (*llm.Request, error) {
 	if inAdapter == nil {
@@ -426,18 +520,39 @@ func (ra *relayAttempt) forward() (int, error) {
 		}),
 		plugins.NewLogger(logFields),
 	}
-	// UpstreamTimeOut 只对非流式请求有意义——限定完整 HTTP 请求-响应周期的最大等待时间。
-	// 流式请求的生命周期由 writeStream 内的三个超时独立管理：
-	//   FirstTokenTimeOut — 首 token 超时，超时切渠道
-	//   StreamIdleTimeOut — token 间空闲超时
-	//   StreamHardTimeOut — 流总时长上限
-	// 流式请求在 pipeline.Process 阶段由原始请求 ctx + OS TCP 超时兜底。
+	// Streaming timeout strategy:
+	//   HTTP connection phase (pipeline.Process) — applies ResponseHeaderTimeout
+	//     to bound the time waiting for upstream HTTP response headers.
+	//     ResponseHeaderTimeout only fires before headers arrive; once the
+	//     HTTP 200 + headers are received, the streaming body is unaffected.
+	//   SSE reading phase (writeStream) — first-token timer, idle timer, hard timer.
+	//   FirstTokenTimeOut must NOT be set on processCtx because that context is
+	//   bound to the HTTP request via http.NewRequestWithContext. When the
+	//   deadline fires, the transport cancels all subsequent response body reads,
+	//   killing streams that are actively producing tokens even when the first
+	//   token arrived well within the timeout.
+	// See also: stream_timeout_test.go for writeStream timeout tests.
 	processCtx := ctx
 	var cancel context.CancelFunc
 	isStreaming := ra.internalRequest.Stream != nil && *ra.internalRequest.Stream
 	if ra.group.UpstreamTimeOut > 0 && !isStreaming {
 		processCtx, cancel = context.WithTimeout(ctx, time.Duration(ra.group.UpstreamTimeOut)*time.Second)
 		defer cancel()
+	}
+	// For streaming requests, set ResponseHeaderTimeout on the HTTP transport so
+	// the connection phase cannot hang longer than FirstTokenTimeOut. This is
+	// separate from writeStream's first-token timer which covers the SSE phase.
+	// We clone the shared transport to avoid affecting other concurrent requests.
+	if isStreaming && ra.group.FirstTokenTimeOut > 0 {
+		timeout := time.Duration(ra.group.FirstTokenTimeOut) * time.Second
+		if transport, ok := httpClient.Transport.(*http.Transport); ok && transport != nil {
+			cloned := transport.Clone()
+			cloned.ResponseHeaderTimeout = timeout
+			httpClient = &http.Client{
+				Transport: cloned,
+				Timeout:   0,
+			}
+		}
 	}
 	result, err := pipeline.NewFactory(httpclient.NewHttpClientWithClient(httpClient)).
 		Pipeline(
@@ -449,8 +564,20 @@ func (ra *relayAttempt) forward() (int, error) {
 		Process(processCtx, ra.internalRequest.RawRequest)
 	if err != nil {
 		if processCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-			err = fmt.Errorf("upstream timeout (%ds): %w", ra.group.UpstreamTimeOut, context.DeadlineExceeded)
+			if isStreaming && ra.group.FirstTokenTimeOut > 0 {
+				err = fmt.Errorf("first token timeout (%ds): %w", ra.group.FirstTokenTimeOut, context.DeadlineExceeded)
+			} else {
+				err = fmt.Errorf("upstream timeout (%ds): %w", ra.group.UpstreamTimeOut, context.DeadlineExceeded)
+			}
+		} else if isStreaming && ra.group.FirstTokenTimeOut > 0 && ctx.Err() == nil {
+			// Detect transport-level timeout (ResponseHeaderTimeout fired before
+			// the upstream sent any HTTP response headers).
+			var urlErr *url.Error
+			if errors.As(err, &urlErr) && urlErr.Timeout() {
+				err = fmt.Errorf("first token timeout (%ds): %w", ra.group.FirstTokenTimeOut, context.DeadlineExceeded)
+			}
 		}
+		logFields.URL = ra.upstreamURL
 		plugins.LogUpstreamError(logFields, err)
 		var upstreamErr *httpclient.Error
 		if errors.As(err, &upstreamErr) {
@@ -589,6 +716,34 @@ func successShapedError(body []byte) string {
 	}
 
 	return ""
+}
+
+// finishReasonContentFilter is the finish_reason value for content-filtered responses.
+const finishReasonContentFilter = "content_filter"
+
+// hasContentFilterFinishReason checks if any event in the response stream contains
+// a finish_reason of "content_filter". The upstream returns this when its content
+// filter catches the output.
+func hasContentFilterFinishReason(events []*httpclient.StreamEvent) bool {
+	var event struct {
+		Choices []struct {
+			FinishReason *string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	for _, ev := range events {
+		if ev == nil || len(ev.Data) == 0 {
+			continue
+		}
+		if err := json.Unmarshal(ev.Data, &event); err != nil {
+			continue
+		}
+		for _, choice := range event.Choices {
+			if choice.FinishReason != nil && *choice.FinishReason == finishReasonContentFilter {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // writeStream writes pipeline output (client-format stream) back to the requester, preserving first-token timeout switch-channel behavior.
@@ -734,9 +889,19 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			return fmt.Errorf("stream idle timeout (%ds)", streamIdleTimeOutSec)
 		case r, ok := <-results:
 			if !ok {
-				log.Infof("stream end")
+				log.Debugf("stream end")
 				if len(responseEvents) == 0 {
 					return nil
+				}
+				// Check for upstream content filter before aggregating usage.
+				// The upstream may return a successful HTTP stream with finish_reason "content_filter",
+				// which means the model output was filtered. This should be counted as a failure
+				// so that monitoring and circuit-breakers respond appropriately.
+				if hasContentFilterFinishReason(responseEvents) {
+					log.Warnf("upstream content filter detected, marking as failure")
+					ra.statusCode = http.StatusBadGateway
+					ra.keyCooldown = maxDuration(30*time.Second, ra.keyCooldown)
+					return fmt.Errorf("upstream content filter: finish_reason=%s", finishReasonContentFilter)
 				}
 				responseBody, meta, err := ra.inAdapter.AggregateStreamChunks(context.WithoutCancel(ctx), responseEvents)
 				if err != nil {
@@ -758,7 +923,6 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 				log.Warnf("failed to read event: %v", r.err)
 				return fmt.Errorf("failed to read stream event: %w", r.err)
 			}
-
 			if r.event == nil || len(r.event.Data) == 0 {
 				continue
 			}
@@ -820,11 +984,32 @@ func (m *relayPipelineMiddleware) Name() string {
 	return "octopus_relay"
 }
 
+// OnInboundLlmRequest normalizes roles for upstream compatibility.
+// The "developer" role (OpenAI o-series) is not supported by all upstream APIs
+// (e.g., GLM via ModelScope). Convert it to "system" which is universally accepted.
+func (m *relayPipelineMiddleware) OnInboundLlmRequest(ctx context.Context, request *llm.Request) (*llm.Request, error) {
+	if request == nil {
+		return nil, nil
+	}
+	for i := range request.Messages {
+		if request.Messages[i].Role == "developer" {
+			request.Messages[i].Role = "system"
+		}
+	}
+	return request, nil
+}
+
 func (m *relayPipelineMiddleware) OnOutboundRawRequest(ctx context.Context, request *httpclient.Request) (*httpclient.Request, error) {
 	if request.Headers == nil {
 		request.Headers = make(http.Header)
 	}
+	m.attempt.upstreamURL = request.URL
 	m.attempt.applyChannelRequestOptions(request)
+	// Set default User-Agent if none of the transformers or custom headers set one.
+	// This overrides httpclient's own "axonhub/1.0" default.
+	if request.Headers.Get("User-Agent") == "" {
+		request.Headers.Set("User-Agent", "curl/8.5.0")
+	}
 	return request, nil
 }
 

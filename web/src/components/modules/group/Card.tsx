@@ -58,6 +58,7 @@ function EditDialogContent({ group, displayMembers, isSubmitting, onSubmit }: Ed
                         stream_idle_time_out: group.stream_idle_time_out ?? 0,
                         stream_hard_time_out: group.stream_hard_time_out ?? 0,
                         session_keep_time: group.session_keep_time ?? 0,
+                        rate_limit_retry_wait_max: group.rate_limit_retry_wait_max ?? null,
                         members: displayMembers,
                     }}
                     submitText={t('detail.actions.save')}
@@ -231,6 +232,7 @@ export function GroupCard({ group }: { group: Group }) {
         const nextStreamIdleTimeOut = values.stream_idle_time_out ?? 0;
         const nextStreamHardTimeOut = values.stream_hard_time_out ?? 0;
         const nextSessionKeepTime = values.session_keep_time ?? 0;
+        const nextRateLimitRetryWaitMax = values.rate_limit_retry_wait_max ?? null;
 
         if (nextName && nextName !== group.name) payload.name = nextName;
         if (values.mode !== group.mode) payload.mode = values.mode;
@@ -240,6 +242,7 @@ export function GroupCard({ group }: { group: Group }) {
         if (nextStreamIdleTimeOut !== (group.stream_idle_time_out ?? 0)) payload.stream_idle_time_out = nextStreamIdleTimeOut;
         if (nextStreamHardTimeOut !== (group.stream_hard_time_out ?? 0)) payload.stream_hard_time_out = nextStreamHardTimeOut;
         if (nextSessionKeepTime !== (group.session_keep_time ?? 0)) payload.session_keep_time = nextSessionKeepTime;
+        if (nextRateLimitRetryWaitMax !== (group.rate_limit_retry_wait_max ?? null)) payload.rate_limit_retry_wait_max = nextRateLimitRetryWaitMax;
         if (items_to_add.length) payload.items_to_add = items_to_add;
         if (items_to_update.length) payload.items_to_update = items_to_update;
         if (items_to_delete.length) payload.items_to_delete = items_to_delete;
@@ -256,7 +259,7 @@ export function GroupCard({ group }: { group: Group }) {
             },
             onError,
         });
-    }, [group.first_token_time_out, group.upstream_time_out, group.stream_idle_time_out, group.stream_hard_time_out, group.session_keep_time, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
+    }, [group.first_token_time_out, group.upstream_time_out, group.stream_idle_time_out, group.stream_hard_time_out, group.session_keep_time, group.rate_limit_retry_wait_max, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
 
     return (
         <article className="flex flex-col rounded-3xl border border-border bg-card text-card-foreground p-4 custom-shadow">

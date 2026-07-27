@@ -29,6 +29,7 @@ export type GroupEditorValues = {
     stream_idle_time_out: number;
     stream_hard_time_out: number;
     session_keep_time: number;
+    rate_limit_retry_wait_max: number | null;
     members: SelectedMember[];
 };
 
@@ -263,6 +264,7 @@ export function GroupEditor({
     const [streamIdleTimeOut, setStreamIdleTimeOut] = useState<number>(initial?.stream_idle_time_out ?? 0);
     const [streamHardTimeOut, setStreamHardTimeOut] = useState<number>(initial?.stream_hard_time_out ?? 0);
     const [sessionKeepTime, setSessionKeepTime] = useState<number>(initial?.session_keep_time ?? 0);
+    const [rateLimitRetryWaitMax, setRateLimitRetryWaitMax] = useState<number | null>(initial?.rate_limit_retry_wait_max ?? null);
     const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>(initial?.members ?? []);
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
 
@@ -349,6 +351,7 @@ export function GroupEditor({
             stream_idle_time_out: streamIdleTimeOut,
             stream_hard_time_out: streamHardTimeOut,
             session_keep_time: sessionKeepTime,
+            rate_limit_retry_wait_max: rateLimitRetryWaitMax,
             members: selectedMembers,
         });
     };
@@ -550,6 +553,40 @@ export function GroupEditor({
                                     const n = Number.parseInt(raw, 10);
                                     setSessionKeepTime(Number.isFinite(n) && n > 0 ? n : 0);
                                 }}
+                                className="rounded-xl"
+                            />
+                        </Field>
+                        <Field>
+                            <FieldLabel htmlFor="group-rate-limit-retry-wait-max">
+                                {t('form.rateLimitRetryWaitMax') || 'Rate Limit Retry Wait Max'}
+                                <TooltipProvider>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <HelpCircle className="size-4 text-muted-foreground cursor-help" />
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            {t('form.rateLimitRetryWaitMaxHint') || 'Max wait time (seconds) before retrying when all channels are rate-limited. 0 = disabled. Empty = use default 120s.'}
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
+                            </FieldLabel>
+                            <Input
+                                id="group-rate-limit-retry-wait-max"
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                step={1}
+                                value={rateLimitRetryWaitMax == null ? '' : String(rateLimitRetryWaitMax)}
+                                onChange={(e) => {
+                                    const raw = e.target.value;
+                                    if (raw.trim() === '') {
+                                        setRateLimitRetryWaitMax(null);
+                                        return;
+                                    }
+                                    const n = Number.parseInt(raw, 10);
+                                    setRateLimitRetryWaitMax(Number.isFinite(n) && n >= 0 ? n : null);
+                                }}
+                                placeholder="120"
                                 className="rounded-xl"
                             />
                         </Field>

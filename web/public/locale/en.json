@@ -401,7 +401,9 @@
             "autoAdd": "Auto Add",
             "clear": "Clear",
             "selectChannel": "Channel",
-            "selectModel": "Model"
+            "selectModel": "Model",
+            "rateLimitRetryWaitMax": "Rate Limit Retry Wait Max",
+            "rateLimitRetryWaitMaxHint": "Max wait time (seconds) before retrying when all channels are rate-limited. 0 = disabled. Empty = use default 120s."
         },
         "mode": {
             "roundRobin": "Round Robin",
@@ -565,6 +567,7 @@
             "typeGemini": "Gemini",
             "typeVolcengine": "Volcengine",
             "typeDeepSeek": "DeepSeek",
+            "typeXAI": "xAI / Grok",
             "typeOpenRouter": "OpenRouter",
             "typeBailian": "Bailian",
             "autoSync": "Auto Sync",
@@ -584,7 +587,15 @@
             "modelRateLimit": "Model Rate Limit",
             "modelRateLimitPlaceholder": "Optional: model-specific limits, e.g. gpt-4=2/1m,claude-3:free=10/1h",
             "keyProxy": "Key Proxy",
-            "keyProxyPlaceholder": "Optional: proxy URL"
+            "keyProxyPlaceholder": "Optional: proxy URL",
+            "circuitBreakerConfig": "Circuit Breaker",
+            "cbThreshold": "Threshold",
+            "cbThresholdPlaceholder": "Default",
+            "cbCooldown": "Cooldown (s)",
+            "cbCooldownPlaceholder": "Default",
+            "cbMaxCooldown": "Max Cooldown (s)",
+            "cbMaxCooldownPlaceholder": "Default",
+            "cbDescription": "Leave empty to use global defaults. Per-channel overrides apply only to this channel."
         }
     }
 }

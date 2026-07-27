@@ -133,3 +133,24 @@ func upsertMigrationRecord(db *gorm.DB, version int, status MigrationRecordStatu
 		DoUpdates: clause.AssignmentColumns([]string{"status"}),
 	}).Create(&rec).Error
 }
+
+// HasColumn checks if a column exists in a table, accounting for dialect differences.
+func HasColumn(db *gorm.DB, table, column string) bool {
+	dialect := db.Dialector.Name()
+	switch dialect {
+	case "sqlite":
+		var name string
+		db.Raw("SELECT name FROM pragma_table_info(?) WHERE name = ? LIMIT 1", table, column).Scan(&name)
+		return name == column
+	case "mysql":
+		var count int64
+		db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?", table, column).Scan(&count)
+		return count > 0
+	case "postgres":
+		var count int64
+		db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", table, column).Scan(&count)
+		return count > 0
+	default:
+		return db.Migrator().HasColumn(table, column)
+	}
+}

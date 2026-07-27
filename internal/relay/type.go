@@ -33,5 +33,6 @@ type relayAttempt struct {
 	rateLimited     bool          // 本次尝试因本地限流失败
 	rateLimitWait   time.Duration // 限流等待时间
 	responseWritten bool          // true after streaming writes a client-visible event
+	upstreamURL    string        // 上游完整请求 URL(request.URL)，用于失败日志
 	tryNextKey      bool          // true: 试同一渠道下一个 key; false: 切下一渠道
 }

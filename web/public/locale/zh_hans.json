@@ -401,7 +401,9 @@
             "autoAdd": "自动添加",
             "clear": "清空",
             "selectChannel": "渠道",
-            "selectModel": "模型"
+            "selectModel": "模型",
+            "rateLimitRetryWaitMax": "限流重试等待上限",
+            "rateLimitRetryWaitMaxHint": "所有渠道都被限流时，重试前的最大等待时间（秒）。0 = 禁用。留空 = 默认 120 秒。"
         },
         "mode": {
             "roundRobin": "轮询",
@@ -565,6 +567,7 @@
             "typeGemini": "Gemini",
             "typeVolcengine": "火山引擎",
             "typeDeepSeek": "DeepSeek",
+            "typeXAI": "xAI / Grok",
             "typeOpenRouter": "OpenRouter",
             "typeBailian": "百炼",
             "autoSync": "自动同步",
@@ -584,7 +587,15 @@
             "modelRateLimit": "Model 限流",
             "modelRateLimitPlaceholder": "可选：Model 级限流，如 gpt-4=2/1m,claude-3:free=10/1h",
             "keyProxy": "Key 代理",
-            "keyProxyPlaceholder": "可选：代理地址"
+            "keyProxyPlaceholder": "可选：代理地址",
+            "circuitBreakerConfig": "熔断器",
+            "cbThreshold": "熔断阈值",
+            "cbThresholdPlaceholder": "默认",
+            "cbCooldown": "冷却时间（秒）",
+            "cbCooldownPlaceholder": "默认",
+            "cbMaxCooldown": "最大冷却（秒）",
+            "cbMaxCooldownPlaceholder": "默认",
+            "cbDescription": "留空使用全局默认值。渠道级覆盖仅对该渠道生效。"
         }
     }
 }

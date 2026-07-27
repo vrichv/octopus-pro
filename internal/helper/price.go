@@ -10,11 +10,18 @@ import (
 
 func LLMPriceAddToDB(modelNames []string, ctx context.Context) error {
 	newLLMInfos := make([]model.LLMInfo, 0, len(modelNames))
-	newLLMNames := make([]string, 0, len(modelNames))
 	for _, modelName := range modelNames {
 		if modelName == "" {
 			continue
 		}
+
+		// 若 DB/cache 中已有非零价格（手工设置），跳过不覆盖。
+		if existing, err := op.LLMGet(modelName); err == nil {
+			if existing.Input != 0 || existing.Output != 0 || existing.CacheRead != 0 || existing.CacheWrite != 0 {
+				continue
+			}
+		}
+
 		modelPrice := price.GetLLMPrice(modelName)
 		if modelPrice != nil {
 			newLLMInfos = append(newLLMInfos, model.LLMInfo{
@@ -24,7 +31,6 @@ func LLMPriceAddToDB(modelNames []string, ctx context.Context) error {
 		} else {
 			newLLMInfos = append(newLLMInfos, model.LLMInfo{Name: modelName})
 		}
-		newLLMNames = append(newLLMNames, modelName)
 	}
 	if len(newLLMInfos) > 0 {
 		return op.LLMBatchCreate(newLLMInfos, ctx)

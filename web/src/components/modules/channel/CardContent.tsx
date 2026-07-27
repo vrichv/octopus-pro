@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import {
     Trash2,
     CheckCircle2,
@@ -10,9 +10,13 @@ import {
     TrendingUp,
     Globe,
     Key,
-    Settings
+    Settings,
+    ChevronDown,
+    Shield,
+    Gauge,
+    ThermometerSun,
 } from 'lucide-react';
-import { useUpdateChannel, useDeleteChannel, type Channel, type UpdateChannelRequest } from '@/api/endpoints/channel';
+import { useUpdateChannel, useDeleteChannel, useSchedulingStatus, type Channel, type UpdateChannelRequest, type KeyStatusEntry, type ModelStatusEntry } from '@/api/endpoints/channel';
 import {
     MorphingDialogTitle,
     MorphingDialogDescription,
@@ -29,7 +33,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 export function CardContent({ channel, stats }: { channel: Channel; stats: StatsMetricsFormatted }) {
-    const { setIsOpen } = useMorphingDialog();
+    const { setIsOpen, dirtyRef } = useMorphingDialog();
     const updateChannel = useUpdateChannel();
     const deleteChannel = useDeleteChannel();
     const [isEditing, setIsEditing] = useState(false);
@@ -64,16 +68,57 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         rate_limit: channel.rate_limit ?? '',
         model_rate_limit: channel.model_rate_limit ?? '',
         key_mode: channel.key_mode ?? 0,
+        circuit_breaker_threshold: channel.circuit_breaker_threshold != null ? String(channel.circuit_breaker_threshold) : '',
+        circuit_breaker_cooldown: channel.circuit_breaker_cooldown != null ? String(channel.circuit_breaker_cooldown) : '',
+        circuit_breaker_max_cooldown: channel.circuit_breaker_max_cooldown != null ? String(channel.circuit_breaker_max_cooldown) : '',
     });
     const t = useTranslations('channel.detail');
-
-    const currentView = isEditing ? 'editing' : 'viewing';
 
     const baseUrlsEqual = (a: Channel['base_urls'] | undefined, b: Channel['base_urls'] | undefined) =>
         JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
     const headersEqual = (a: Channel['custom_header'] | undefined, b: Channel['custom_header'] | undefined) =>
         JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
 
+    // Track dirty state via ref — no re-render, no layout animation break.
+    const channelRef = useRef(channel);
+    channelRef.current = channel;
+    dirtyRef.current = isEditing && (() => {
+        const ch = channelRef.current;
+        return (
+            formData.name !== ch.name ||
+            formData.type !== ch.type ||
+            formData.enabled !== ch.enabled ||
+            !baseUrlsEqual(formData.base_urls, ch.base_urls) ||
+            formData.model !== ch.model ||
+            formData.custom_model !== ch.custom_model ||
+            formData.excluded_model !== (ch.excluded_model ?? '') ||
+            formData.proxy !== ch.proxy ||
+            formData.auto_sync !== ch.auto_sync ||
+            formData.auto_group !== ch.auto_group ||
+            !headersEqual(formData.custom_header, ch.custom_header) ||
+            formData.channel_proxy.trim() !== (ch.channel_proxy ?? '') ||
+            formData.param_override.trim() !== (ch.param_override ?? '') ||
+            formData.match_regex.trim() !== (ch.match_regex ?? '') ||
+            formData.rate_limit.trim() !== (ch.rate_limit ?? '') ||
+            formData.model_rate_limit.trim() !== (ch.model_rate_limit ?? '') ||
+            (formData.key_mode ?? 0) !== (ch.key_mode ?? 0) ||
+            formData.circuit_breaker_threshold.trim() !== (ch.circuit_breaker_threshold != null ? String(ch.circuit_breaker_threshold) : '') ||
+            formData.circuit_breaker_cooldown.trim() !== (ch.circuit_breaker_cooldown != null ? String(ch.circuit_breaker_cooldown) : '') ||
+            formData.circuit_breaker_max_cooldown.trim() !== (ch.circuit_breaker_max_cooldown != null ? String(ch.circuit_breaker_max_cooldown) : '') ||
+            formData.keys.some((k) => {
+                if (!k.id) return k.channel_key.trim() !== '';
+                const orig = ch.keys.find((c) => c.id === k.id);
+                if (!orig) return true;
+                return k.enabled !== orig.enabled ||
+                    k.channel_key !== orig.channel_key ||
+                    (k.remark ?? '') !== orig.remark ||
+                    (k.key_proxy ?? '') !== (orig.key_proxy ?? '');
+            })
+        );
+    })();
+
+
+    const currentView = isEditing ? 'editing' : 'viewing';
     const handleUpdate = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const req: UpdateChannelRequest = { id: channel.id };
@@ -125,6 +170,12 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         const curRateLimit = channel.rate_limit ?? '';
         if (nextRateLimit !== curRateLimit) req.rate_limit = nextRateLimit;
         const nextModelRateLimit = formData.model_rate_limit.trim();
+        const cbThreshold = formData.circuit_breaker_threshold.trim() ? parseInt(formData.circuit_breaker_threshold, 10) : null;
+        if (cbThreshold !== (channel.circuit_breaker_threshold ?? null)) req.circuit_breaker_threshold = cbThreshold;
+        const cbCooldown = formData.circuit_breaker_cooldown.trim() ? parseInt(formData.circuit_breaker_cooldown, 10) : null;
+        if (cbCooldown !== (channel.circuit_breaker_cooldown ?? null)) req.circuit_breaker_cooldown = cbCooldown;
+        const cbMaxCooldown = formData.circuit_breaker_max_cooldown.trim() ? parseInt(formData.circuit_breaker_max_cooldown, 10) : null;
+        if (cbMaxCooldown !== (channel.circuit_breaker_max_cooldown ?? null)) req.circuit_breaker_max_cooldown = cbMaxCooldown;
         const curModelRateLimit = channel.model_rate_limit ?? '';
         if (nextModelRateLimit !== curModelRateLimit) req.model_rate_limit = nextModelRateLimit;
         if ((formData.key_mode ?? 0) !== (channel.key_mode ?? 0)) req.key_mode = formData.key_mode;
@@ -163,6 +214,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
 
         updateChannel.mutate(req, {
             onSuccess: () => {
+                dirtyRef.current = false;
                 setIsEditing(false);
                 setIsOpen(false);
             }
@@ -485,6 +537,10 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                 </dl>
                             </div>
 
+                            {/* 调度状态面板 */}
+                            <SchedulingStatusPanel channelId={channel.id} />
+
+
                             {/* 操作按钮 */}
                             <div className="grid gap-3 sm:grid-cols-2 pt-2">
                                 <Button
@@ -527,5 +583,124 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                 </Tabs>
             </MorphingDialogDescription>
         </>
+    );
+}
+
+function SchedulingStatusPanel({ channelId }: { channelId: number }) {
+    const [expanded, setExpanded] = useState(false);
+    const { data: status, isLoading } = useSchedulingStatus(expanded ? channelId : null);
+
+    return (
+        <section className="space-y-2">
+            <button
+                type="button"
+                onClick={() => setExpanded(!expanded)}
+                className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider w-full"
+            >
+                <Shield className="size-3.5" />
+                <span>Scheduling Status</span>
+                <ChevronDown className={cn('size-3.5 ml-auto transition-transform', expanded && 'rotate-180')} />
+            </button>
+
+            {expanded && (
+                <div className="rounded-xl border bg-card/50 p-3 space-y-3 text-sm">
+                    {isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+                    {status?.keys.map((key) => (
+                        <KeyStatus keyId={key.key_id} keySuffix={key.key_suffix} models={key.models} />
+                    ))}
+                    {status?.keys.length === 0 && (
+                        <p className="text-xs text-muted-foreground">No active keys</p>
+                    )}
+                </div>
+            )}
+        </section>
+    );
+}
+
+function KeyStatus({ keyId, keySuffix, models }: { keyId: number; keySuffix: string; models: ModelStatusEntry[] }) {
+    const [open, setOpen] = useState(false);
+    const hasIssue = models.some(
+        (m) => m.circuit_breaker.state !== 'closed' || m.cooldown.active
+    );
+
+    return (
+        <div className="rounded-lg border border-border/50 overflow-hidden">
+            <button
+                type="button"
+                onClick={() => setOpen(!open)}
+                className={cn(
+                    'flex items-center gap-2 w-full px-3 py-2 text-xs hover:bg-muted/50 transition-colors',
+                    hasIssue && 'bg-destructive/5'
+                )}
+            >
+                <Key className="size-3" />
+                <span className="font-mono">{keySuffix}</span>
+                <span className="text-muted-foreground ml-auto">{models.length} model{models.length !== 1 ? 's' : ''}</span>
+                {hasIssue && <span className="size-2 rounded-full bg-destructive" />}
+                <ChevronDown className={cn('size-3 transition-transform', open && 'rotate-180')} />
+            </button>
+
+            {open && (
+                <div className="divide-y divide-border/50">
+                    {models.map((m) => (
+                        <ModelStatus key={`${keyId}-${m.model}`} entry={m} />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ModelStatus({ entry }: { entry: ModelStatusEntry }) {
+    const cb = entry.circuit_breaker;
+    const cd = entry.cooldown;
+    const rl = entry.rate_limit;
+
+    return (
+        <div className="px-3 py-2 space-y-1.5 text-xs">
+            <div className="font-medium text-foreground">{entry.model}</div>
+
+            {/* Circuit Breaker */}
+            <div className="flex items-center gap-2">
+                <Shield className="size-3 text-muted-foreground" />
+                <span className={cn(
+                    'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold',
+                    cb.state === 'closed' && 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+                    cb.state === 'open' && 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+                    cb.state === 'half_open' && 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+                )}>
+                    {cb.state}
+                </span>
+                {cb.consecutive_failures > 0 && <span className="text-muted-foreground">({cb.consecutive_failures} failures)</span>}
+                {cb.cooldown_remaining_sec > 0 && <span className="text-muted-foreground">⏳ {cb.cooldown_remaining_sec}s</span>}
+            </div>
+
+            {/* Cooldown */}
+            {cd.active && (
+                <div className="flex items-center gap-2">
+                    <ThermometerSun className="size-3 text-orange-500" />
+                    <span className="text-orange-600 dark:text-orange-400">Cooling</span>
+                    {cd.cooldown_until && <span className="text-muted-foreground">until {new Date(cd.cooldown_until).toLocaleTimeString()}</span>}
+                    {cd.consecutive_429s > 0 && <span className="text-muted-foreground">({cd.consecutive_429s} 429s)</span>}
+                </div>
+            )}
+
+            {/* Rate Limit */}
+            {(rl.key_limit || rl.model_limit) && (
+                <div className="flex items-center gap-2 flex-wrap">
+                    <Gauge className="size-3 text-muted-foreground" />
+                    {rl.key_limit && (
+                        <span className="text-muted-foreground">
+                            Key: {rl.key_limit.remaining}/{rl.key_limit.count} remaining
+                        </span>
+                    )}
+                    {rl.model_limit && (
+                        <span className="text-muted-foreground">
+                            Model: {rl.model_limit.remaining}/{rl.model_limit.count} remaining
+                        </span>
+                    )}
+                </div>
+            )}
+        </div>
     );
 }

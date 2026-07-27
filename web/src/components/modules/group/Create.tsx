@@ -13,7 +13,7 @@ import { GroupEditor } from './Editor';
 import { toast } from '@/components/common/Toast';
 
 export function CreateDialogContent() {
-    const { setIsOpen } = useMorphingDialog();
+    const { setIsOpen, dirtyRef } = useMorphingDialog();
     const createGroup = useCreateGroup();
     const t = useTranslations('group');
 
@@ -39,7 +39,7 @@ export function CreateDialogContent() {
                     submitText={t('create.submit')}
                     submittingText={t('create.submitting')}
                     isSubmitting={createGroup.isPending}
-                    onSubmit={({ name, match_regex, mode, first_token_time_out, upstream_time_out, stream_idle_time_out, stream_hard_time_out, session_keep_time, members }) => {
+                    onSubmit={({ name, match_regex, mode, first_token_time_out, upstream_time_out, stream_idle_time_out, stream_hard_time_out, session_keep_time, rate_limit_retry_wait_max, members }) => {
                         const items: GroupItem[] = members.map((member, index) => ({
                             channel_id: member.channel_id,
                             model_name: member.name,
@@ -48,9 +48,9 @@ export function CreateDialogContent() {
                         }));
 
                         createGroup.mutate(
-                            { name, mode, match_regex: match_regex ?? '', first_token_time_out: first_token_time_out ?? 0, upstream_time_out: upstream_time_out ?? 0, stream_idle_time_out: stream_idle_time_out ?? 0, stream_hard_time_out: stream_hard_time_out ?? 0, session_keep_time: session_keep_time ?? 0, items },
+                            { name, mode, match_regex: match_regex ?? '', first_token_time_out: first_token_time_out ?? 0, upstream_time_out: upstream_time_out ?? 0, stream_idle_time_out: stream_idle_time_out ?? 0, stream_hard_time_out: stream_hard_time_out ?? 0, session_keep_time: session_keep_time ?? 0, rate_limit_retry_wait_max: rate_limit_retry_wait_max ?? undefined, items },
                             {
-                                onSuccess: () => setIsOpen(false),
+                                onSuccess: () => { dirtyRef.current = false; setIsOpen(false); },
                                 onError: (error) => toast.error(t('toast.createFailed'), { description: error.message }),
                             }
                         );

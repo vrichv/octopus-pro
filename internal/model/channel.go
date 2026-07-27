@@ -25,6 +25,7 @@ const ChannelTypeDoubao llm.APIFormat = "doubao"
 const ChannelTypeDeepSeek llm.APIFormat = "deepseek/chat_completions"
 const ChannelTypeOpenRouter llm.APIFormat = "openrouter/chat_completions"
 const ChannelTypeBailian llm.APIFormat = "bailian/chat_completions"
+const ChannelTypeXAI llm.APIFormat = "xai"
 
 type Channel struct {
 	ID             int            `json:"id" gorm:"primaryKey"`
@@ -44,9 +45,12 @@ type Channel struct {
 	ChannelProxy   *string        `json:"channel_proxy"`
 	Stats          *StatsChannel  `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
 	MatchRegex     *string        `json:"match_regex"`
-	RateLimit      string         `json:"rate_limit" gorm:"default:''"`       // key 级默认限流，如 "100/1h"
-	ModelRateLimit string         `json:"model_rate_limit" gorm:"default:''"` // model 级限流，如 "gpt-4=2/1m,claude-3=10/1h"
-	KeyMode        int            `json:"key_mode" gorm:"default:0"`          // 0=Cost, 1=RoundRobin
+	RateLimit                    string         `json:"rate_limit" gorm:"default:''"`       // key 级默认限流，如 "100/1h"
+	ModelRateLimit               string         `json:"model_rate_limit" gorm:"default:''"` // model 级限流，如 "gpt-4=2/1m,claude-3=10/1h"
+	KeyMode                      int            `json:"key_mode" gorm:"default:0"`          // 0=Cost, 1=RoundRobin
+	CircuitBreakerThreshold      *int           `json:"circuit_breaker_threshold"`           // nil=use global
+	CircuitBreakerCooldown       *int           `json:"circuit_breaker_cooldown"`            // nil=use global (seconds)
+	CircuitBreakerMaxCooldown    *int           `json:"circuit_breaker_max_cooldown"`        // nil=use global (seconds)
 }
 
 type BaseUrl struct {
@@ -90,9 +94,12 @@ type ChannelUpdateRequest struct {
 	ChannelProxy   *string         `json:"channel_proxy,omitempty"`
 	ParamOverride  *string         `json:"param_override,omitempty"`
 	MatchRegex     *string         `json:"match_regex,omitempty"`
-	RateLimit      *string         `json:"rate_limit,omitempty"`
-	ModelRateLimit *string         `json:"model_rate_limit,omitempty"`
-	KeyMode        *int            `json:"key_mode,omitempty"`
+	RateLimit                    *string `json:"rate_limit,omitempty"`
+	ModelRateLimit               *string `json:"model_rate_limit,omitempty"`
+	KeyMode                      *int    `json:"key_mode,omitempty"`
+	CircuitBreakerThreshold      *int    `json:"circuit_breaker_threshold,omitempty"`
+	CircuitBreakerCooldown       *int    `json:"circuit_breaker_cooldown,omitempty"`
+	CircuitBreakerMaxCooldown    *int    `json:"circuit_breaker_max_cooldown,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`
 	KeysToUpdate []ChannelKeyUpdateRequest `json:"keys_to_update,omitempty"`
@@ -359,4 +366,33 @@ func isKeyModelCooling(channelID, keyID int, modelName string) bool {
 		return false
 	}
 	return true
+}
+
+// CooldownStatus 用于 API 查询的冷却状态快照。
+type CooldownStatus struct {
+	Active          bool   `json:"active"`
+	Consecutive429s int    `json:"consecutive_429s"`
+	CooldownUntil   string `json:"cooldown_until"`
+}
+
+// GetKeyModelCooldownStatus 返回指定 (key, model) 的冷却当前状态。
+func GetKeyModelCooldownStatus(channelID, keyID int, modelName string) CooldownStatus {
+	key := modelCooldownKey(channelID, keyID, modelName)
+	v, ok := globalKeyModelCooldown.Load(key)
+	if !ok {
+		return CooldownStatus{}
+	}
+	entry := v.(*keyModelCooldownEntry)
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	status := CooldownStatus{
+		Consecutive429s: entry.consecutive429s,
+	}
+	if !entry.cooldownUntil.IsZero() && time.Now().Before(entry.cooldownUntil) {
+		status.Active = true
+		status.CooldownUntil = entry.cooldownUntil.Format(time.RFC3339)
+	}
+	return status
 }

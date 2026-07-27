@@ -262,63 +262,46 @@ func (e *RateLimitedError) Is(target error) bool {
 // NewRateLimiter 创建限流中间件。
 // 在发出上游请求前检查 key 级和 model 级限流。
 func NewRateLimiter(ch *model.Channel, keyID int, modelName string) pipeline.Middleware {
-	// 预解析限流配置
-	var keyLimitCount int
-	var keyLimitInterval time.Duration
-	var keyHasLimit bool
+	var checks []rateLimitCheck
 
-	if ch.RateLimit != "" {
-		if c, dur, err := ParseRateSpec(ch.RateLimit); err == nil {
-			keyLimitCount = c
-			keyLimitInterval = dur
-			keyHasLimit = true
-		}
-	}
-
+	// Parse model-level limit first
 	modelLimits := ParseModelRateLimit(ch.ModelRateLimit)
 	modelSpec, modelHasLimit := modelLimits[modelName]
-
-	var modelLimitCount int
-	var modelLimitInterval time.Duration
-
 	if modelHasLimit {
 		if c, dur, err := ParseRateSpec(modelSpec); err == nil {
-			modelLimitCount = c
-			modelLimitInterval = dur
-		} else {
-			modelHasLimit = false
+			checks = append(checks, rateLimitCheck{
+				key:      fmt.Sprintf("ch:%d:m:%s", ch.ID, modelName),
+				count:    c,
+				interval: dur,
+			})
 		}
 	}
 
-	// 确定限流 key 和参数
-	limitKey := ""
-	limitCount := 0
-	limitInterval := time.Duration(0)
-
-	if modelHasLimit {
-		// model 级限流：key = "ch:{channelID}:m:{modelName}"
-		limitKey = fmt.Sprintf("ch:%d:m:%s", ch.ID, modelName)
-		limitCount = modelLimitCount
-		limitInterval = modelLimitInterval
-	} else if keyHasLimit {
-		// key 级默认限流：key = "ch:{channelID}:k:{keyID}"
-		limitKey = fmt.Sprintf("ch:%d:k:%d", ch.ID, keyID)
-		limitCount = keyLimitCount
-		limitInterval = keyLimitInterval
+	// Parse key-level limit (always apply if present, regardless of model limit)
+	if ch.RateLimit != "" {
+		if c, dur, err := ParseRateSpec(ch.RateLimit); err == nil {
+			checks = append(checks, rateLimitCheck{
+				key:      fmt.Sprintf("ch:%d:k:%d", ch.ID, keyID),
+				count:    c,
+				interval: dur,
+			})
+		}
 	}
 
 	return &rateLimiterMiddleware{
-		limitKey:      limitKey,
-		limitCount:    limitCount,
-		limitInterval: limitInterval,
+		checks: checks,
 	}
+}
+
+type rateLimitCheck struct {
+	key      string
+	count    int
+	interval time.Duration
 }
 
 type rateLimiterMiddleware struct {
 	pipeline.DummyMiddleware
-	limitKey      string
-	limitCount    int
-	limitInterval time.Duration
+	checks []rateLimitCheck
 }
 
 func (m *rateLimiterMiddleware) Name() string {
@@ -326,15 +309,48 @@ func (m *rateLimiterMiddleware) Name() string {
 }
 
 func (m *rateLimiterMiddleware) OnOutboundRawRequest(ctx context.Context, request *httpclient.Request) (*httpclient.Request, error) {
-	if m.limitKey == "" {
-		return request, nil
-	}
-	rl := getOrCreateLimiter(m.limitKey, m.limitCount, m.limitInterval)
-	if rlErr := rl.TryAllow(); rlErr != nil {
-		rlErr.Key = m.limitKey
-		rlErr.Limit = m.limitCount
-		rlErr.Interval = m.limitInterval
-		return nil, rlErr
+	for _, check := range m.checks {
+		if check.key == "" {
+			continue
+		}
+		rl := getOrCreateLimiter(check.key, check.count, check.interval)
+		if rlErr := rl.TryAllow(); rlErr != nil {
+			rlErr.Key = check.key
+			rlErr.Limit = check.count
+			rlErr.Interval = check.interval
+			return nil, rlErr
+		}
 	}
 	return request, nil
+}
+
+// RateLimiterStatus 用于 API 查询的限流器状态快照。
+type RateLimiterStatus struct {
+	Count      int    `json:"count"`
+	Interval   string `json:"interval"`
+	Used       int    `json:"used"`
+	Remaining  int    `json:"remaining"`
+}
+
+// GetRateLimiterStatus 返回指定限流 key 的当前状态。
+// 若限流器不存在或参数为 0，返回空状态。
+func GetRateLimiterStatus(key string, count int, interval time.Duration) RateLimiterStatus {
+	if key == "" || count <= 0 {
+		return RateLimiterStatus{}
+	}
+	rl := getOrCreateLimiter(key, count, interval)
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.cleanWindow()
+	used := len(rl.window)
+	remaining := rl.count - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	return RateLimiterStatus{
+		Count:     rl.count,
+		Interval:  rl.interval.String(),
+		Used:      used,
+		Remaining: remaining,
+	}
 }

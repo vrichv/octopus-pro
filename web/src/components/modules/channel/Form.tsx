@@ -44,6 +44,9 @@ export interface ChannelFormData {
     rate_limit: string;
     model_rate_limit: string;
     key_mode: number;
+    circuit_breaker_threshold: string;
+    circuit_breaker_cooldown: string;
+    circuit_breaker_max_cooldown: string;
 }
 
 export interface ChannelFormProps {
@@ -83,6 +86,19 @@ const dedupeModels = (models: string[]) => {
     return nextModels;
 };
 
+const DEFAULT_BASE_URLS: Record<string, string> = {
+    [ChannelType.OpenAIChat]: 'https://api.openai.com/v1',
+    [ChannelType.OpenAIResponse]: 'https://api.openai.com/v1',
+    [ChannelType.OpenAIEmbedding]: 'https://api.openai.com/v1',
+    [ChannelType.Anthropic]: 'https://api.anthropic.com',
+    [ChannelType.Gemini]: 'https://generativelanguage.googleapis.com',
+    [ChannelType.Volcengine]: 'https://ark.cn-beijing.volces.com/api/v3',
+    [ChannelType.DeepSeek]: 'https://api.deepseek.com',
+    [ChannelType.OpenRouter]: 'https://openrouter.ai/api/v1',
+    [ChannelType.Bailian]: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    [ChannelType.XAI]: 'https://api.x.ai/v1',
+};
+
 export function ChannelForm({
     formData,
     onFormDataChange,
@@ -111,6 +127,16 @@ export function ChannelForm({
             onFormDataChange({ ...formData, custom_header: [{ header_key: '', header_value: '' }] });
         }
     }, [formData, onFormDataChange]);
+
+    // Auto-fill default base URL when channel type changes and no custom URL is set.
+    useEffect(() => {
+        const defaultURL = DEFAULT_BASE_URLS[formData.type as string];
+        if (!defaultURL) return;
+        const hasCustomURL = (formData.base_urls ?? []).some((u) => u.url.trim() !== '');
+        if (hasCustomURL) return;
+        onFormDataChange({ ...formData, base_urls: [{ url: defaultURL, delay: 0 }] });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [formData.type]);
 
     const autoModels = useMemo(() => dedupeModels(splitModels(formData.model)), [formData.model]);
     const customModels = useMemo(() => dedupeModels(splitModels(formData.custom_model)), [formData.custom_model]);
@@ -432,6 +458,7 @@ export function ChannelForm({
                             <SelectItem className='rounded-xl' value={String(ChannelType.OpenRouter)}>{t('typeOpenRouter')}</SelectItem>
                             <SelectItem className='rounded-xl' value={String(ChannelType.Bailian)}>{t('typeBailian')}</SelectItem>
                             <SelectItem className='rounded-xl' value={String(ChannelType.OpenAIEmbedding)}>{t('typeOpenAIEmbedding')}</SelectItem>
+                            <SelectItem className='rounded-xl' value={String(ChannelType.XAI)}>{t('typeXAI')}</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
@@ -739,6 +766,58 @@ export function ChannelForm({
                                 placeholder={t('modelRateLimitPlaceholder')}
                                 className="rounded-xl"
                             />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium text-card-foreground">
+                                {t('circuitBreakerConfig') || 'Circuit Breaker'}
+                            </label>
+                            <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                    <label htmlFor={`${idPrefix}-cb-threshold`} className="text-xs text-muted-foreground">
+                                        {t('cbThreshold') || 'Threshold'}
+                                    </label>
+                                    <Input
+                                        id={`${idPrefix}-cb-threshold`}
+                                        type="number"
+                                        min="0"
+                                        value={formData.circuit_breaker_threshold}
+                                        onChange={(e) => onFormDataChange({ ...formData, circuit_breaker_threshold: e.target.value })}
+                                        placeholder={t('cbThresholdPlaceholder') || 'Default'}
+                                        className="rounded-xl"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor={`${idPrefix}-cb-cooldown`} className="text-xs text-muted-foreground">
+                                        {t('cbCooldown') || 'Cooldown (s)'}
+                                    </label>
+                                    <Input
+                                        id={`${idPrefix}-cb-cooldown`}
+                                        type="number"
+                                        min="0"
+                                        value={formData.circuit_breaker_cooldown}
+                                        onChange={(e) => onFormDataChange({ ...formData, circuit_breaker_cooldown: e.target.value })}
+                                        placeholder={t('cbCooldownPlaceholder') || 'Default'}
+                                        className="rounded-xl"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor={`${idPrefix}-cb-max-cooldown`} className="text-xs text-muted-foreground">
+                                        {t('cbMaxCooldown') || 'Max Cooldown (s)'}
+                                    </label>
+                                    <Input
+                                        id={`${idPrefix}-cb-max-cooldown`}
+                                        type="number"
+                                        min="0"
+                                        value={formData.circuit_breaker_max_cooldown}
+                                        onChange={(e) => onFormDataChange({ ...formData, circuit_breaker_max_cooldown: e.target.value })}
+                                        placeholder={t('cbMaxCooldownPlaceholder') || 'Default'}
+                                        className="rounded-xl"
+                                    />
+                                </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                {t('cbDescription') || 'Leave empty to use global defaults. Per-channel overrides apply only to this channel.'}
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">

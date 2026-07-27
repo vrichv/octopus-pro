@@ -10,12 +10,12 @@ import { useTranslations } from 'next-intl';
 import { ChannelForm, type ChannelFormData } from './Form';
 
 export function CreateDialogContent() {
-    const { setIsOpen } = useMorphingDialog();
+    const { setIsOpen, dirtyRef } = useMorphingDialog();
     const createChannel = useCreateChannel();
     const [formData, setFormData] = useState<ChannelFormData>({
         name: '',
         type: ChannelType.OpenAIChat,
-        base_urls: [{ url: '', delay: 0 }],
+        base_urls: [{ url: 'https://api.openai.com/v1', delay: 0 }],
         custom_header: [],
         channel_proxy: '',
         param_override: '',
@@ -31,8 +31,29 @@ export function CreateDialogContent() {
         rate_limit: '',
         model_rate_limit: '',
         key_mode: 0,
+        circuit_breaker_threshold: '',
+        circuit_breaker_cooldown: '',
+        circuit_breaker_max_cooldown: '',
     });
     const t = useTranslations('channel.create');
+
+    const isFormDirty = (() => {
+        if (formData.name.trim()) return true;
+        if (formData.keys.some((k) => k.channel_key.trim())) return true;
+        if (formData.model.trim()) return true;
+        if (formData.custom_model.trim()) return true;
+        if (formData.base_urls?.some((u) => u.url.trim() && u.url.trim() !== 'https://api.openai.com/v1')) return true;
+        if (formData.channel_proxy.trim()) return true;
+        if (formData.match_regex.trim()) return true;
+        if (formData.rate_limit.trim()) return true;
+        if (formData.model_rate_limit.trim()) return true;
+        if (formData.circuit_breaker_threshold.trim()) return true;
+        if (formData.circuit_breaker_cooldown.trim()) return true;
+        if (formData.circuit_breaker_max_cooldown.trim()) return true;
+        if ((formData.custom_header ?? []).some((h) => h.header_key.trim())) return true;
+        return false;
+    })();
+    dirtyRef.current = isFormDirty;
 
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -69,13 +90,17 @@ export function CreateDialogContent() {
                 rate_limit: formData.rate_limit.trim(),
                 model_rate_limit: formData.model_rate_limit.trim(),
                 key_mode: formData.key_mode,
+                circuit_breaker_threshold: formData.circuit_breaker_threshold.trim() ? parseInt(formData.circuit_breaker_threshold, 10) : undefined,
+                circuit_breaker_cooldown: formData.circuit_breaker_cooldown.trim() ? parseInt(formData.circuit_breaker_cooldown, 10) : undefined,
+                circuit_breaker_max_cooldown: formData.circuit_breaker_max_cooldown.trim() ? parseInt(formData.circuit_breaker_max_cooldown, 10) : undefined,
             },
             {
                 onSuccess: () => {
+                    dirtyRef.current = false;
                     setFormData({
                         name: '',
                         type: ChannelType.OpenAIChat,
-                        base_urls: [{ url: '', delay: 0 }],
+                        base_urls: [{ url: 'https://api.openai.com/v1', delay: 0 }],
                         custom_header: [],
                         channel_proxy: '',
                         param_override: '',
@@ -91,6 +116,9 @@ export function CreateDialogContent() {
                         rate_limit: '',
                         model_rate_limit: '',
                         key_mode: 0,
+                        circuit_breaker_threshold: '',
+                        circuit_breaker_cooldown: '',
+                        circuit_breaker_max_cooldown: '',
                     });
                     setIsOpen(false);
                 }

@@ -121,16 +121,23 @@ function MemberItem({
                 </div>
 
                 {showWeight && (
-                    <input
-                        type="number"
-                        min={1}
-                        value={member.weight ?? 1}
-                        onChange={(e) => onWeightChange?.(member.id, Math.max(1, parseInt(e.target.value) || 1))}
-                        className={cn(
-                            'w-12 h-6 text-xs text-center rounded border border-border bg-muted/50 focus:outline-none focus:ring-1 focus:ring-primary',
-                            isDisabled && 'text-muted-foreground'
-                        )}
-                    />
+                    <Tooltip side="top" sideOffset={6}>
+                        <TooltipTrigger asChild>
+                            <div className="flex items-center gap-1">
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={member.weight ?? 1}
+                                    onChange={(e) => onWeightChange?.(member.id, Math.max(1, parseInt(e.target.value) || 1))}
+                                    className={cn(
+                                        'w-12 h-6 text-xs text-center rounded border border-border bg-muted/50 focus:outline-none focus:ring-1 focus:ring-primary',
+                                        isDisabled && 'text-muted-foreground'
+                                    )}
+                                />
+                            </div>
+                        </TooltipTrigger>
+                        <TooltipContent>Higher value = higher selection probability</TooltipContent>
+                    </Tooltip>
                 )}
 
                 {(!showConfirmDelete || !confirmDelete) && (

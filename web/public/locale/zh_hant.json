@@ -401,7 +401,9 @@
             "autoAdd": "自動新增",
             "clear": "清空",
             "selectChannel": "供應源",
-            "selectModel": "模型"
+            "selectModel": "模型",
+            "rateLimitRetryWaitMax": "限流重試等待上限",
+            "rateLimitRetryWaitMaxHint": "所有供應源都被限流時，重試前的最大等待時間（秒）。0 = 停用。留空 = 預設 120 秒。"
         },
         "mode": {
             "roundRobin": "輪詢",
@@ -565,6 +567,7 @@
             "typeGemini": "Gemini",
             "typeVolcengine": "火山引擎",
             "typeDeepSeek": "DeepSeek",
+            "typeXAI": "xAI / Grok",
             "typeOpenRouter": "OpenRouter",
             "typeBailian": "百煉",
             "autoSync": "自動同步",
@@ -584,7 +587,15 @@
             "modelRateLimit": "Model 限流",
             "modelRateLimitPlaceholder": "可選：Model 級限流，如 gpt-4=2/1m,claude-3:free=10/1h",
             "keyProxy": "Key 代理",
-            "keyProxyPlaceholder": "可選：代理位址"
+            "keyProxyPlaceholder": "可選：代理位址",
+            "circuitBreakerConfig": "熔斷器",
+            "cbThreshold": "熔斷閾值",
+            "cbThresholdPlaceholder": "預設",
+            "cbCooldown": "冷卻時間（秒）",
+            "cbCooldownPlaceholder": "預設",
+            "cbMaxCooldown": "最大冷卻（秒）",
+            "cbMaxCooldownPlaceholder": "預設",
+            "cbDescription": "留空使用全域預設值。供應源級覆蓋僅對該供應源生效。"
         }
     }
 }

@@ -5,6 +5,7 @@ type LLMPrice struct {
 	Output     float64 `json:"output"`
 	CacheRead  float64 `json:"cache_read"`
 	CacheWrite float64 `json:"cache_write"`
+	MaxContext int     `json:"max_context"` // 0=unknown, >0=context window limit in tokens
 }
 
 type LLMInfo struct {
