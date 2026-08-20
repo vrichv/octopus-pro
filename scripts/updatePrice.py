@@ -150,47 +150,53 @@ def generate_entry(model_id: str, cost: dict) -> str:
 def main():
     print(f"Fetching price data from {LLM_PRICE_URL}...")
     raw_price = fetch_price_data()
-    
+
     entries = []
+    seen_ids: set[str] = set()
     model_count = 0
-    
+
     for provider in PROVIDERS:
         if provider not in raw_price:
             print(f"  Provider '{provider}' not found, skipping...")
             continue
-            
+
         models = raw_price[provider].get("models", {})
         provider_count = 0
-        
+
         for model_data in models.values():
             model_id = model_data.get("id", "").lower()
             cost = model_data.get("cost", {})
-            
+
             if not model_id:
                 continue
-            
-            # 添加原始模型
-            entries.append(generate_entry(model_id, cost))
-            provider_count += 1
-            
+
+            # 添加原始模型（跨 provider 去重，避免 Go map 重复 key）
+            if model_id not in seen_ids:
+                entries.append(generate_entry(model_id, cost))
+                seen_ids.add(model_id)
+                provider_count += 1
+
             # 收集所有别名
             aliases = []
-            
+
             # 1. Claude 模型自动生成别名
             aliases.extend(generate_claude_aliases(model_id))
-            
+
             # 2. 静态别名映射
             if model_id in MODEL_ALIASES:
                 aliases.extend(MODEL_ALIASES[model_id])
-            
+
             # 添加别名 (去重)
             for alias in set(aliases):
-                entries.append(generate_entry(alias.lower(), cost))
+                alias_id = alias.lower()
+                if alias_id in seen_ids:
+                    continue
+                entries.append(generate_entry(alias_id, cost))
+                seen_ids.add(alias_id)
                 provider_count += 1
-            
+
         print(f"  {provider}: {provider_count} models")
         model_count += provider_count
-    
     # 生成 Go 文件内容
     update_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     content = PRESETS_GO_TEMPLATE.format(
