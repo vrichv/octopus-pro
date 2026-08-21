@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"sort"
 	"sync"
 	"time"
 
@@ -260,6 +261,56 @@ func RelayLogList(ctx context.Context, startTime, endTime *int, page, pageSize i
 	}
 
 	return result, nil
+}
+
+// RelayLogCachedInRange returns a stable, newest-first snapshot of the small
+// in-memory buffer for streaming exports.
+func RelayLogCachedInRange(startTime, endTime int64) []model.RelayLog {
+	relayLogCacheLock.Lock()
+	logs := make([]model.RelayLog, 0, len(relayLogCache))
+	for _, relayLog := range relayLogCache {
+		if relayLog.Time >= startTime && relayLog.Time <= endTime {
+			logs = append(logs, relayLog)
+		}
+	}
+	relayLogCacheLock.Unlock()
+	sort.Slice(logs, func(i, j int) bool { return logs[i].ID > logs[j].ID })
+	return logs
+}
+
+// RelayLogCountInRange counts persisted rows eligible for export. Disabled
+// persistence deliberately excludes old database rows, matching RelayLogList.
+func RelayLogCountInRange(ctx context.Context, startTime, endTime int64) (int64, error) {
+	enabled, err := SettingGetBool(model.SettingKeyRelayLogKeepEnabled)
+	if err != nil || !enabled {
+		return 0, err
+	}
+	var count int64
+	err = db.GetDB().WithContext(ctx).Model(&model.RelayLog{}).
+		Where("time >= ? AND time <= ?", startTime, endTime).
+		Count(&count).Error
+	return count, err
+}
+
+// RelayLogListPage reads one newest-first persisted page. beforeID=0 starts
+// at the newest row; later calls continue strictly below the prior page.
+func RelayLogListPage(ctx context.Context, startTime, endTime, beforeID int64, pageSize int) ([]model.RelayLog, error) {
+	if pageSize <= 0 {
+		return nil, nil
+	}
+	enabled, err := SettingGetBool(model.SettingKeyRelayLogKeepEnabled)
+	if err != nil || !enabled {
+		return nil, err
+	}
+	query := db.GetDB().WithContext(ctx).Where("time >= ? AND time <= ?", startTime, endTime)
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
+	}
+	var logs []model.RelayLog
+	if err := query.Order("id DESC").Limit(pageSize).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+	return logs, nil
 }
 
 // RelayLogListAll queries all relay logs within the time range, from both cache and DB.

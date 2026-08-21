@@ -3,8 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -136,6 +137,11 @@ func streamLog(c *gin.Context) {
 	}
 }
 
+const (
+	exportPageSize   = 1000
+	exportMaxRecords = 100000
+)
+
 // exportLogEntry is a simplified log entry for AI analysis export.
 type exportLogEntry struct {
 	Time        int64                  `json:"time"`
@@ -184,198 +190,233 @@ type exportPayload struct {
 	Records []exportLogEntry `json:"records"`
 }
 
+type exportChannelAggregate struct {
+	channelID int
+	total     int
+	success   int
+	failed    int
+	count429  int
+	useTime   int
+	hourly429 map[int]int
+}
+
+type exportModelAggregate struct {
+	total    int
+	count429 int
+	channels map[string]struct{}
+}
+
+type exportAccumulator struct {
+	payload           exportPayload
+	channels          map[string]*exportChannelAggregate
+	models            map[string]*exportModelAggregate
+	success           int
+	failed            int
+	count429          int
+	circuitBreakCount int
+	timeoutCount      int
+}
+
+func newExportAccumulator(startTime, endTime int64, now time.Time) *exportAccumulator {
+	accumulator := &exportAccumulator{
+		channels: make(map[string]*exportChannelAggregate),
+		models:   make(map[string]*exportModelAggregate),
+	}
+	accumulator.payload.ExportedAt = now.Format(time.RFC3339)
+	accumulator.payload.TimeRange = struct{ Start, End int64 }{Start: startTime, End: endTime}
+	return accumulator
+}
+
+func (a *exportAccumulator) add(relayLog model.RelayLog) exportLogEntry {
+	success := relayLog.Error == ""
+	if success {
+		a.success++
+	} else {
+		a.failed++
+	}
+	channelName := relayLog.ChannelName
+	if channelName == "" {
+		channelName = fmt.Sprintf("ch-%d", relayLog.ChannelId)
+	}
+	channel, ok := a.channels[channelName]
+	if !ok {
+		channel = &exportChannelAggregate{channelID: relayLog.ChannelId, hourly429: make(map[int]int)}
+		a.channels[channelName] = channel
+	}
+	channel.total++
+	if success {
+		channel.success++
+	} else {
+		channel.failed++
+	}
+	channel.useTime += relayLog.UseTime
+
+	modelName := relayLog.ActualModelName
+	if modelName == "" {
+		modelName = relayLog.RequestModelName
+	}
+	modelAggregate, ok := a.models[modelName]
+	if !ok {
+		modelAggregate = &exportModelAggregate{channels: make(map[string]struct{})}
+		a.models[modelName] = modelAggregate
+	}
+	modelAggregate.total++
+	modelAggregate.channels[relayLog.ChannelName] = struct{}{}
+	for _, attempt := range relayLog.Attempts {
+		if attempt.Status == model.AttemptCircuitBreak {
+			a.circuitBreakCount++
+			continue
+		}
+		if attempt.Status == model.AttemptFailed && is429(attempt.Msg) {
+			a.count429++
+			channel.count429++
+			modelAggregate.count429++
+			channel.hourly429[time.Unix(relayLog.Time, 0).Hour()]++
+		}
+	}
+	if relayLog.Error != "" && containsTimeout(relayLog.Error) {
+		a.timeoutCount++
+	}
+	return exportLogEntry{
+		Time: relayLog.Time, ChannelID: relayLog.ChannelId, ChannelName: relayLog.ChannelName,
+		Model: relayLog.ActualModelName, UseTime: relayLog.UseTime, Ftut: relayLog.Ftut,
+		Success: success, Error: relayLog.Error, Attempts: relayLog.Attempts,
+	}
+}
+
+func (a *exportAccumulator) finalize(recordCount int) exportPayload {
+	payload := a.payload
+	payload.TotalRecords = recordCount
+	payload.Summary.TotalRequests = recordCount
+	payload.Summary.Success = a.success
+	payload.Summary.Failed = a.failed
+	payload.Summary.Count429 = a.count429
+	payload.Summary.CircuitBreakCount = a.circuitBreakCount
+	payload.Summary.TimeoutCount = a.timeoutCount
+	for channelName, aggregate := range a.channels {
+		average := 0
+		if aggregate.total > 0 {
+			average = aggregate.useTime / aggregate.total
+		}
+		payload.Summary.Channels = append(payload.Summary.Channels, exportChannelSummary{
+			ChannelID: aggregate.channelID, ChannelName: channelName, Total: aggregate.total,
+			Success: aggregate.success, Failed: aggregate.failed, Count429: aggregate.count429,
+			AvgUseTime: average, Hourly429: aggregate.hourly429,
+		})
+	}
+	sort.Slice(payload.Summary.Channels, func(i, j int) bool {
+		return payload.Summary.Channels[i].ChannelName < payload.Summary.Channels[j].ChannelName
+	})
+	for modelName, aggregate := range a.models {
+		channels := make([]string, 0, len(aggregate.channels))
+		for channelName := range aggregate.channels {
+			channels = append(channels, channelName)
+		}
+		sort.Strings(channels)
+		payload.Summary.Models = append(payload.Summary.Models, exportModelSummary{
+			ModelName: modelName, Total: aggregate.total, Count429: aggregate.count429, ChannelsAffected: channels,
+		})
+	}
+	sort.Slice(payload.Summary.Models, func(i, j int) bool { return payload.Summary.Models[i].ModelName < payload.Summary.Models[j].ModelName })
+	return payload
+}
+
 func exportAnalysis(c *gin.Context) {
-	hoursStr := c.DefaultQuery("hours", "24")
-	hours, err := strconv.Atoi(hoursStr)
+	hours, err := strconv.Atoi(c.DefaultQuery("hours", "24"))
 	if err != nil || hours < 1 || hours > 96 {
 		resp.Error(c, http.StatusBadRequest, "invalid hours parameter")
 		return
 	}
-
 	now := time.Now()
-	endTime := now.Unix()
 	startTime := now.Add(-time.Duration(hours) * time.Hour).Unix()
-
-	logs, err := op.RelayLogListAll(c.Request.Context(), startTime, endTime)
+	endTime := now.Unix()
+	persistedCount, err := op.RelayLogCountInRange(c.Request.Context(), startTime, endTime)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	cachedLogs := op.RelayLogCachedInRange(startTime, endTime)
+	if persistedCount+int64(len(cachedLogs)) > exportMaxRecords {
+		resp.Error(c, http.StatusRequestEntityTooLarge, "export exceeds 100000 records; reduce the time range")
+		return
+	}
 
-	payload := buildExportPayload(logs, startTime, endTime, now)
-
-	filename := fmt.Sprintf("data/export_analysis_%s.json", now.Format("20060102_150405"))
-	os.MkdirAll("data", 0755)
-	file, err := os.Create(filename)
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=export_analysis_%s.json", now.Format("20060102_150405")))
+	accumulator := newExportAccumulator(startTime, endTime, now)
+	writer := c.Writer
+	exportedAt, _ := json.Marshal(accumulator.payload.ExportedAt)
+	timeRange, _ := json.Marshal(accumulator.payload.TimeRange)
+	if _, err := fmt.Fprintf(writer, `{"exported_at":%s,"time_range":%s,"records":[`, exportedAt, timeRange); err != nil {
+		return
+	}
+	firstRecord := true
+	recordCount := 0
+	emit := func(relayLog model.RelayLog) error {
+		entry, err := json.Marshal(accumulator.add(relayLog))
+		if err != nil {
+			return err
+		}
+		if !firstRecord {
+			if _, err := io.WriteString(writer, ","); err != nil {
+				return err
+			}
+		}
+		firstRecord = false
+		if _, err := writer.Write(entry); err != nil {
+			return err
+		}
+		recordCount++
+		return nil
+	}
+	cacheIDs := make(map[int64]struct{}, len(cachedLogs))
+	for _, relayLog := range cachedLogs {
+		cacheIDs[relayLog.ID] = struct{}{}
+		if err := emit(relayLog); err != nil {
+			return
+		}
+	}
+	var beforeID int64
+	for {
+		page, err := op.RelayLogListPage(c.Request.Context(), startTime, endTime, beforeID, exportPageSize)
+		if err != nil {
+			return
+		}
+		if len(page) == 0 {
+			break
+		}
+		beforeID = page[len(page)-1].ID
+		for _, relayLog := range page {
+			if _, cached := cacheIDs[relayLog.ID]; cached {
+				continue
+			}
+			if err := emit(relayLog); err != nil {
+				return
+			}
+		}
+		if len(page) < exportPageSize {
+			break
+		}
+	}
+	payload := accumulator.finalize(recordCount)
+	summary, err := json.Marshal(payload.Summary)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(payload); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	resp.Success(c, gin.H{
-		"file":    filename,
-		"records": len(logs),
-	})
+	_, _ = fmt.Fprintf(writer, `],"summary":%s,"total_records":%d}`, summary, payload.TotalRecords)
 }
 
 func buildExportPayload(logs []model.RelayLog, startTime, endTime int64, now time.Time) exportPayload {
-	payload := exportPayload{
-		ExportedAt:   now.Format(time.RFC3339),
-		TimeRange:    struct{ Start, End int64 }{Start: startTime, End: endTime},
-		TotalRecords: len(logs),
-		Records:      make([]exportLogEntry, 0, len(logs)),
+	accumulator := newExportAccumulator(startTime, endTime, now)
+	payload := exportPayload{Records: make([]exportLogEntry, 0, len(logs))}
+	for _, relayLog := range logs {
+		payload.Records = append(payload.Records, accumulator.add(relayLog))
 	}
-
-	// Channel aggregates
-	type channelAgg struct {
-		channelID int
-		total     int
-		success   int
-		failed    int
-		count429  int
-		useTime   int
-		hourly429 map[int]int
-	}
-	channelMap := make(map[string]*channelAgg)
-
-	// Model aggregates
-	type modelAgg struct {
-		total    int
-		count429 int
-		channels map[string]struct{}
-	}
-	modelMap := make(map[string]*modelAgg)
-
-	circuitBreakCount := 0
-	timeoutCount := 0
-	totalSuccess := 0
-	totalFailed := 0
-	total429 := 0
-
-	for _, log := range logs {
-		success := log.Error == ""
-		entry := exportLogEntry{
-			Time:        log.Time,
-			ChannelID:   log.ChannelId,
-			ChannelName: log.ChannelName,
-			Model:       log.ActualModelName,
-			UseTime:     log.UseTime,
-			Ftut:        log.Ftut,
-			Success:     success,
-			Error:       log.Error,
-			Attempts:    log.Attempts,
-		}
-		payload.Records = append(payload.Records, entry)
-
-		if success {
-			totalSuccess++
-		} else {
-			totalFailed++
-		}
-
-		// Channel aggregation
-		chKey := log.ChannelName
-		if chKey == "" {
-			chKey = fmt.Sprintf("ch-%d", log.ChannelId)
-		}
-		ch, ok := channelMap[chKey]
-		if !ok {
-			ch = &channelAgg{channelID: log.ChannelId, hourly429: make(map[int]int)}
-			channelMap[chKey] = ch
-		}
-		ch.total++
-		if success {
-			ch.success++
-		} else {
-			ch.failed++
-		}
-		ch.useTime += log.UseTime
-
-		// Model aggregation
-		modelName := log.ActualModelName
-		if modelName == "" {
-			modelName = log.RequestModelName
-		}
-		m, ok := modelMap[modelName]
-		if !ok {
-			m = &modelAgg{channels: make(map[string]struct{})}
-			modelMap[modelName] = m
-		}
-		m.total++
-		m.channels[log.ChannelName] = struct{}{}
-
-		// Check attempts for 429 and circuit_break
-		for _, a := range log.Attempts {
-			if a.Status == model.AttemptCircuitBreak {
-				circuitBreakCount++
-				continue
-			}
-			if a.Status == model.AttemptFailed {
-				if is429(a.Msg) {
-					total429++
-					ch.count429++
-					m.count429++
-					hour := time.Unix(log.Time, 0).Hour()
-					ch.hourly429[hour]++
-				}
-			}
-		}
-
-		// Check for timeout
-		if log.Error != "" {
-			if containsTimeout(log.Error) {
-				timeoutCount++
-			}
-		}
-	}
-
-	payload.Summary.TotalRequests = len(logs)
-	payload.Summary.Success = totalSuccess
-	payload.Summary.Failed = totalFailed
-	payload.Summary.Count429 = total429
-	payload.Summary.CircuitBreakCount = circuitBreakCount
-	payload.Summary.TimeoutCount = timeoutCount
-
-	for chKey, agg := range channelMap {
-		avgUse := 0
-		if agg.total > 0 {
-			avgUse = agg.useTime / agg.total
-		}
-		payload.Summary.Channels = append(payload.Summary.Channels, exportChannelSummary{
-			ChannelID:   agg.channelID,
-			ChannelName: chKey,
-			Total:       agg.total,
-			Success:     agg.success,
-			Failed:      agg.failed,
-			Count429:    agg.count429,
-			AvgUseTime:  avgUse,
-			Hourly429:   agg.hourly429,
-		})
-	}
-
-	for modelName, agg := range modelMap {
-		chAffected := make([]string, 0, len(agg.channels))
-		for ch := range agg.channels {
-			chAffected = append(chAffected, ch)
-		}
-		payload.Summary.Models = append(payload.Summary.Models, exportModelSummary{
-			ModelName:        modelName,
-			Total:            agg.total,
-			Count429:         agg.count429,
-			ChannelsAffected: chAffected,
-		})
-	}
-
-	return payload
+	finalized := accumulator.finalize(len(logs))
+	finalized.Records = payload.Records
+	return finalized
 }
+
 func is429(msg string) bool {
 	return len(msg) > 0 && (strings.Contains(msg, "429") || strings.Contains(msg, "Too Many Requests"))
 }
