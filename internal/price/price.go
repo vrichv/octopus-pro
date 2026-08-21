@@ -37,7 +37,7 @@ var developerFamilies = map[string][]string{
 }
 
 var (
-	claudeTypeFirstPattern = regexp.MustCompile(`^claude-(opus|sonnet|haiku)-(\d)-(\d)(-.*)?$`)
+	claudeTypeFirstPattern    = regexp.MustCompile(`^claude-(opus|sonnet|haiku)-(\d)-(\d)(-.*)?$`)
 	claudeVersionFirstPattern = regexp.MustCompile(`^claude-(\d)-(\d)-(opus|sonnet|haiku)(-.*)?$`)
 )
 
@@ -173,10 +173,14 @@ func GetLastUpdateTime() time.Time {
 
 func GetLLMPrice(modelName string) *model.LLMPrice {
 	modelName = strings.ToLower(modelName)
-	if dbPrice, err := op.LLMGet(modelName); err == nil {
+	if dbPrice, err := op.LLMGet(modelName); err == nil && hasConfiguredPrice(dbPrice) {
 		return &dbPrice
 	}
 	return LookupCalibratedPrice(modelName)
+}
+
+func hasConfiguredPrice(price model.LLMPrice) bool {
+	return price.Input != 0 || price.Output != 0 || price.CacheRead != 0 || price.CacheWrite != 0
 }
 
 // LookupCalibratedPrice 只查 models.dev 校准表，不读数据库手工价。

@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -13,18 +14,22 @@ import (
 )
 
 func FetchModels(ctx context.Context, request model.Channel) ([]string, error) {
-	client, err := ChannelHttpClient(&request)
+	key := request.GetChannelKey("")
+	if key.ChannelKey == "" {
+		return nil, fmt.Errorf("channel has no available key")
+	}
+	client, err := KeyHttpClient(&request, &key)
 	if err != nil {
 		return nil, err
 	}
 	fetchModel := make([]string, 0)
 	switch request.Type {
 	case llm.APIFormatAnthropicMessage:
-		fetchModel, err = fetchAnthropicModels(client, ctx, request)
+		fetchModel, err = fetchAnthropicModels(client, ctx, request, key.ChannelKey)
 	case llm.APIFormatGeminiContents:
-		fetchModel, err = fetchGeminiModels(client, ctx, request)
+		fetchModel, err = fetchGeminiModels(client, ctx, request, key.ChannelKey)
 	default:
-		fetchModel, err = fetchOpenAIModels(client, ctx, request)
+		fetchModel, err = fetchOpenAIModels(client, ctx, request, key.ChannelKey)
 	}
 	if err != nil {
 		return nil, err
@@ -50,7 +55,7 @@ func FetchModels(ctx context.Context, request model.Channel) ([]string, error) {
 }
 
 // refer: https://platform.openai.com/docs/api-reference/models/list
-func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.Channel) ([]string, error) {
+func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.Channel, apiKey string) ([]string, error) {
 	baseURL := transformer.NormalizeBaseURL(request.GetBaseUrl(), "v1")
 	if request.Type == model.ChannelTypeDoubao {
 		baseURL = transformer.NormalizeBaseURL(request.GetBaseUrl(), "v3")
@@ -61,7 +66,7 @@ func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.C
 		baseURL+"/models",
 		nil,
 	)
-	req.Header.Set("Authorization", "Bearer "+request.GetChannelKey("").ChannelKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	applyCustomHeaders(req, request)
 
 	resp, err := client.Do(req)
@@ -84,7 +89,7 @@ func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.C
 }
 
 // refer: https://ai.google.dev/api/models
-func fetchGeminiModels(client *http.Client, ctx context.Context, request model.Channel) ([]string, error) {
+func fetchGeminiModels(client *http.Client, ctx context.Context, request model.Channel, apiKey string) ([]string, error) {
 	var allModels []string
 	pageToken := ""
 	baseURL := transformer.NormalizeBaseURL(request.GetBaseUrl(), "v1beta")
@@ -100,7 +105,7 @@ func fetchGeminiModels(client *http.Client, ctx context.Context, request model.C
 			baseURL+"/models",
 			nil,
 		)
-		req.Header.Set("X-Goog-Api-Key", request.GetChannelKey("").ChannelKey)
+		req.Header.Set("X-Goog-Api-Key", apiKey)
 		applyCustomHeaders(req, request)
 		if pageToken != "" {
 			q := req.URL.Query()
@@ -131,13 +136,13 @@ func fetchGeminiModels(client *http.Client, ctx context.Context, request model.C
 		pageToken = result.NextPageToken
 	}
 	if len(allModels) == 0 {
-		return fetchOpenAIModels(client, ctx, request)
+		return fetchOpenAIModels(client, ctx, request, apiKey)
 	}
 	return allModels, nil
 }
 
 // refer: https://platform.claude.com/docs
-func fetchAnthropicModels(client *http.Client, ctx context.Context, request model.Channel) ([]string, error) {
+func fetchAnthropicModels(client *http.Client, ctx context.Context, request model.Channel, apiKey string) ([]string, error) {
 
 	var allModels []string
 	var afterID string
@@ -150,7 +155,7 @@ func fetchAnthropicModels(client *http.Client, ctx context.Context, request mode
 			baseURL+"/models",
 			nil,
 		)
-		req.Header.Set("X-Api-Key", request.GetChannelKey("").ChannelKey)
+		req.Header.Set("X-Api-Key", apiKey)
 		req.Header.Set("Anthropic-Version", "2023-06-01")
 		applyCustomHeaders(req, request)
 		// 设置多页参数
@@ -184,7 +189,7 @@ func fetchAnthropicModels(client *http.Client, ctx context.Context, request mode
 		afterID = result.LastID
 	}
 	if len(allModels) == 0 {
-		return fetchOpenAIModels(client, ctx, request)
+		return fetchOpenAIModels(client, ctx, request, apiKey)
 	}
 	return allModels, nil
 }

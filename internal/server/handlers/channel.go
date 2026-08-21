@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -59,9 +60,14 @@ func init() {
 				Handle(getLastSyncTime),
 		).
 		AddRoute(
+			router.NewRoute("/sync-status", http.MethodGet).
+				Handle(getSyncStatus),
+		).
+		AddRoute(
 			router.NewRoute("/:id/scheduling-status", http.MethodGet).
 				Handle(getSchedulingStatus),
 		)
+
 }
 
 func listChannel(c *gin.Context) {
@@ -170,8 +176,23 @@ func fetchModel(c *gin.Context) {
 }
 
 func syncChannel(c *gin.Context) {
-	task.SyncModelsTask()
-	resp.Success(c, nil)
+	if err := task.StartModelSync(); err != nil {
+		if errors.Is(err, task.ErrModelSyncRunning) {
+			resp.Error(c, http.StatusConflict, err.Error())
+			return
+		}
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusAccepted, resp.ResponseStruct{
+		Code:    http.StatusAccepted,
+		Message: "accepted",
+		Data:    task.GetModelSyncStatus(),
+	})
+}
+
+func getSyncStatus(c *gin.Context) {
+	resp.Success(c, task.GetModelSyncStatus())
 }
 
 func getLastSyncTime(c *gin.Context) {
@@ -181,21 +202,21 @@ func getLastSyncTime(c *gin.Context) {
 
 // schedulingStatusResponse 调度状态查询响应。
 type schedulingStatusResponse struct {
-	ChannelID int                  `json:"channel_id"`
-	Keys      []keyStatusEntry     `json:"keys"`
+	ChannelID int              `json:"channel_id"`
+	Keys      []keyStatusEntry `json:"keys"`
 }
 
 type keyStatusEntry struct {
-	KeyID     int                  `json:"key_id"`
-	KeySuffix string               `json:"key_suffix"`
-	Models    []modelStatusEntry   `json:"models"`
+	KeyID     int                `json:"key_id"`
+	KeySuffix string             `json:"key_suffix"`
+	Models    []modelStatusEntry `json:"models"`
 }
 
 type modelStatusEntry struct {
-	Model           string                       `json:"model"`
-	CircuitBreaker  balancer.CircuitBreakerStatus `json:"circuit_breaker"`
-	RateLimit       rateLimitStatus              `json:"rate_limit"`
-	Cooldown        model.CooldownStatus          `json:"cooldown"`
+	Model          string                        `json:"model"`
+	CircuitBreaker balancer.CircuitBreakerStatus `json:"circuit_breaker"`
+	RateLimit      rateLimitStatus               `json:"rate_limit"`
+	Cooldown       model.CooldownStatus          `json:"cooldown"`
 }
 
 type rateLimitStatus struct {

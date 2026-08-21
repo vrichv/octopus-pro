@@ -10,30 +10,42 @@ import (
 
 func LLMPriceAddToDB(modelNames []string, ctx context.Context) error {
 	newLLMInfos := make([]model.LLMInfo, 0, len(modelNames))
+	updatedLLMInfos := make([]model.LLMInfo, 0, len(modelNames))
 	for _, modelName := range modelNames {
 		if modelName == "" {
 			continue
 		}
 
-		// 若 DB/cache 中已有非零价格（手工设置），跳过不覆盖。
+		calibratedPrice := price.LookupCalibratedPrice(modelName)
 		if existing, err := op.LLMGet(modelName); err == nil {
 			if existing.Input != 0 || existing.Output != 0 || existing.CacheRead != 0 || existing.CacheWrite != 0 {
 				continue
 			}
+			if calibratedPrice != nil {
+				updatedLLMInfos = append(updatedLLMInfos, model.LLMInfo{Name: modelName, LLMPrice: model.LLMPrice{
+					Input:      calibratedPrice.Input,
+					Output:     calibratedPrice.Output,
+					CacheRead:  calibratedPrice.CacheRead,
+					CacheWrite: calibratedPrice.CacheWrite,
+					MaxContext: existing.MaxContext,
+				}})
+			}
+			continue
 		}
 
-		modelPrice := price.GetLLMPrice(modelName)
-		if modelPrice != nil {
-			newLLMInfos = append(newLLMInfos, model.LLMInfo{
-				Name:     modelName,
-				LLMPrice: *modelPrice,
-			})
+		if calibratedPrice != nil {
+			newLLMInfos = append(newLLMInfos, model.LLMInfo{Name: modelName, LLMPrice: *calibratedPrice})
 		} else {
 			newLLMInfos = append(newLLMInfos, model.LLMInfo{Name: modelName})
 		}
 	}
 	if len(newLLMInfos) > 0 {
-		return op.LLMBatchCreate(newLLMInfos, ctx)
+		if err := op.LLMBatchCreate(newLLMInfos, ctx); err != nil {
+			return err
+		}
+	}
+	if len(updatedLLMInfos) > 0 {
+		return op.LLMBatchSave(updatedLLMInfos, ctx)
 	}
 	return nil
 }

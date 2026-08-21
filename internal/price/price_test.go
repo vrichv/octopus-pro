@@ -78,3 +78,12 @@ func TestClaudeAliasesMatchGeneratedNames(t *testing.T) {
 		}
 	}
 }
+
+func TestHasConfiguredPrice(t *testing.T) {
+	if hasConfiguredPrice(model.LLMPrice{MaxContext: 128000}) {
+		t.Fatal("context-only placeholder must not shadow calibrated prices")
+	}
+	if !hasConfiguredPrice(model.LLMPrice{Input: 0.15}) {
+		t.Fatal("configured input price was not recognized")
+	}
+}
