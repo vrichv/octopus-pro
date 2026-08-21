@@ -103,6 +103,35 @@ func (m *RelayMetrics) Save(ctx context.Context, success bool, err error, attemp
 	m.saveLog(context.WithoutCancel(ctx), err, duration, attempts, channelID, channelName)
 }
 
+// SaveCanceled records partial usage and the audit trail without classifying a
+// client-canceled relay as a channel success or failure.
+func (m *RelayMetrics) SaveCanceled(ctx context.Context, err error, attempts []model.ChannelAttempt) {
+	duration := time.Since(m.StartTime)
+	usage := model.StatsMetrics{
+		WaitTime:    duration.Milliseconds(),
+		InputToken:  m.Stats.InputToken,
+		OutputToken: m.Stats.OutputToken,
+		InputCost:   m.Stats.InputCost,
+		OutputCost:  m.Stats.OutputCost,
+	}
+	channelID, channelName := finalChannel(attempts)
+	op.StatsTotalUpdate(usage)
+	op.StatsHourlyUpdate(usage)
+	op.StatsDailyUpdate(context.Background(), usage)
+	op.StatsAPIKeyUpdate(m.APIKeyID, usage)
+	if channelID > 0 {
+		op.StatsChannelUpdate(channelID, model.StatsMetrics{
+			InputToken:  m.Stats.InputToken,
+			OutputToken: m.Stats.OutputToken,
+			InputCost:   m.Stats.InputCost,
+			OutputCost:  m.Stats.OutputCost,
+		})
+	}
+	log.Infof("relay canceled: model=%s, channel=%d(%s), duration=%dms, input_token=%d, output_token=%d, attempts=%d",
+		m.RequestModel, channelID, channelName, duration.Milliseconds(), m.Stats.InputToken, m.Stats.OutputToken, len(attempts))
+	m.saveLog(context.WithoutCancel(ctx), err, duration, attempts, channelID, channelName)
+}
+
 func finalChannel(attempts []model.ChannelAttempt) (int, string) {
 	var lastID int
 	var lastName string
@@ -111,7 +140,7 @@ func finalChannel(attempts []model.ChannelAttempt) (int, string) {
 		if a.Status == model.AttemptSuccess {
 			return a.ChannelID, a.ChannelName
 		}
-		if a.Status == model.AttemptFailed && lastID == 0 {
+		if (a.Status == model.AttemptFailed || a.Status == model.AttemptCanceled) && lastID == 0 {
 			lastID = a.ChannelID
 			lastName = a.ChannelName
 		}

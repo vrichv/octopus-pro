@@ -95,11 +95,11 @@ func TestModelAllowedByAPIKey(t *testing.T) {
 			want:            true,
 		},
 		{
-			name:            "empty intersection keeps legacy unrestricted behavior",
+			name:            "empty intersection rejects request",
 			supportedModels: "test,glm-5",
 			availableModels: []string{"deepseek-v4-flash"},
 			requestedModel:  "gpt-5.5",
-			want:            true,
+			want:            false,
 		},
 		{
 			name:            "effective list allows matching request",

@@ -210,8 +210,12 @@ func ChannelBaseUrlUpdate(channelID int, baseUrl []model.BaseUrl) error {
 	return nil
 }
 
-// ChannelKeySaveDB 将运行时更新过的 ChannelKey 缓存写入数据库。
+// ChannelKeySaveDB writes runtime key updates using a snapshot that cannot be
+// replaced by a concurrent management cache refresh.
 func ChannelKeySaveDB(ctx context.Context) error {
+	channelKeyRuntimeLock.Lock()
+	defer channelKeyRuntimeLock.Unlock()
+
 	channelKeyCacheNeedUpdateLock.Lock()
 	keyIDs := make([]int, 0, len(channelKeyCacheNeedUpdate))
 	for id := range channelKeyCacheNeedUpdate {
@@ -543,6 +547,9 @@ func channelRefreshCache(ctx context.Context) error {
 		log.Warnf("failed to get channels: %v", err)
 		return err
 	}
+
+	channelKeyRuntimeLock.Lock()
+	defer channelKeyRuntimeLock.Unlock()
 	channelKeyCache.Clear()
 	channelKeyCacheNeedUpdateLock.Lock()
 	channelKeyCacheNeedUpdate = make(map[int]struct{})
@@ -558,25 +565,52 @@ func channelRefreshCache(ctx context.Context) error {
 	return nil
 }
 
+func channelKeyIsDirty(id int) bool {
+	channelKeyCacheNeedUpdateLock.Lock()
+	defer channelKeyCacheNeedUpdateLock.Unlock()
+	_, ok := channelKeyCacheNeedUpdate[id]
+	return ok
+}
+
+func mergeChannelKeyRuntime(live, refreshed model.ChannelKey) model.ChannelKey {
+	refreshed.TotalCost = live.TotalCost
+	refreshed.StatusCode = live.StatusCode
+	refreshed.LastUseTimeStamp = live.LastUseTimeStamp
+	refreshed.RetryAfter = live.RetryAfter
+	refreshed.ConsecutiveAuthErrors = live.ConsecutiveAuthErrors
+	refreshed.LastAuthErrorTime = live.LastAuthErrorTime
+	return refreshed
+}
+
 func channelRefreshCacheByID(id int, ctx context.Context) error {
-	if old, ok := channelCache.Get(id); ok {
-		for _, k := range old.Keys {
-			if k.ID != 0 {
-				channelKeyCache.Del(k.ID)
-			}
-		}
-	}
-	var channel model.Channel
+	var refreshed model.Channel
 	if err := db.GetDB().WithContext(ctx).
 		Preload("Keys").
 		Preload("Stats").
-		First(&channel, id).Error; err != nil {
+		First(&refreshed, id).Error; err != nil {
 		return err
 	}
-	channelCache.Set(channel.ID, channel)
-	for _, k := range channel.Keys {
-		if k.ID != 0 {
-			channelKeyCache.Set(k.ID, k)
+
+	channelKeyRuntimeLock.Lock()
+	defer channelKeyRuntimeLock.Unlock()
+	if old, ok := channelCache.Get(id); ok {
+		liveByID := make(map[int]model.ChannelKey, len(old.Keys))
+		for _, key := range old.Keys {
+			liveByID[key.ID] = key
+			if key.ID != 0 {
+				channelKeyCache.Del(key.ID)
+			}
+		}
+		for i := range refreshed.Keys {
+			if live, ok := liveByID[refreshed.Keys[i].ID]; ok && channelKeyIsDirty(live.ID) {
+				refreshed.Keys[i] = mergeChannelKeyRuntime(live, refreshed.Keys[i])
+			}
+		}
+	}
+	channelCache.Set(refreshed.ID, refreshed)
+	for _, key := range refreshed.Keys {
+		if key.ID != 0 {
+			channelKeyCache.Set(key.ID, key)
 		}
 	}
 	return nil

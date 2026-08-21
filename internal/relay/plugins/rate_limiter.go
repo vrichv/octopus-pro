@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -309,27 +310,55 @@ func (m *rateLimiterMiddleware) Name() string {
 }
 
 func (m *rateLimiterMiddleware) OnOutboundRawRequest(ctx context.Context, request *httpclient.Request) (*httpclient.Request, error) {
+	type acquiredLimiter struct {
+		check rateLimitCheck
+		rl    *rateLimiter
+	}
+	acquired := make([]acquiredLimiter, 0, len(m.checks))
 	for _, check := range m.checks {
 		if check.key == "" {
 			continue
 		}
-		rl := getOrCreateLimiter(check.key, check.count, check.interval)
-		if rlErr := rl.TryAllow(); rlErr != nil {
-			rlErr.Key = check.key
-			rlErr.Limit = check.count
-			rlErr.Interval = check.interval
-			return nil, rlErr
+		acquired = append(acquired, acquiredLimiter{check: check, rl: getOrCreateLimiter(check.key, check.count, check.interval)})
+	}
+	// A stable order prevents deadlocks when two requests acquire the same
+	// model/key pair concurrently.
+	sort.Slice(acquired, func(i, j int) bool { return acquired[i].check.key < acquired[j].check.key })
+	for i := range acquired {
+		acquired[i].rl.mu.Lock()
+	}
+	defer func() {
+		for i := len(acquired) - 1; i >= 0; i-- {
+			acquired[i].rl.mu.Unlock()
 		}
+	}()
+
+	now := time.Now()
+	for _, entry := range acquired {
+		entry.rl.lastAccess.Store(now.UnixNano())
+		entry.rl.cleanWindow()
+		if len(entry.rl.window) >= entry.rl.count {
+			wait := entry.rl.window[0].Add(entry.rl.interval).Sub(now)
+			return nil, &RateLimitedError{
+				Key:      entry.check.key,
+				Wait:     max(wait, 0),
+				Limit:    entry.check.count,
+				Interval: entry.check.interval,
+			}
+		}
+	}
+	for _, entry := range acquired {
+		entry.rl.window = append(entry.rl.window, now)
 	}
 	return request, nil
 }
 
 // RateLimiterStatus 用于 API 查询的限流器状态快照。
 type RateLimiterStatus struct {
-	Count      int    `json:"count"`
-	Interval   string `json:"interval"`
-	Used       int    `json:"used"`
-	Remaining  int    `json:"remaining"`
+	Count     int    `json:"count"`
+	Interval  string `json:"interval"`
+	Used      int    `json:"used"`
+	Remaining int    `json:"remaining"`
 }
 
 // GetRateLimiterStatus 返回指定限流 key 的当前状态。

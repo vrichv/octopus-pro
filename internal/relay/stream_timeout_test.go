@@ -140,8 +140,8 @@ func TestWriteStream_ClientDisconnectRecordsPartialUsage(t *testing.T) {
 	}()
 
 	err := ra.writeStream(ctx, stream)
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+	if err != nil && !errors.Is(err, errClientCanceled) {
+		t.Fatalf("expected normal completion or cancellation, got %v", err)
 	}
 
 	// At least one of the exit paths should have called AggregateStreamChunks:
@@ -189,32 +189,36 @@ func TestWriteStream_StreamEndNoDuplicateUsage(t *testing.T) {
 	}
 }
 
-func TestWriteStream_EmptyStreamSkipsUsage(t *testing.T) {
+func TestWriteStream_EmptyStreamFailsAndSkipsUsage(t *testing.T) {
 	in := &trackingInbound{
 		usage: &llm.Usage{PromptTokens: 999, CompletionTokens: 999},
 	}
 	ra, _ := newTestRelayAttemptWithInbound(model.Group{}, in)
 	stream := newFakeStream()
-
-	// Close the stream immediately — no events
 	close(stream.events)
 
 	err := ra.writeStream(ra.c.Request.Context(), stream)
-	if err != nil {
-		t.Fatalf("expected nil error on empty stream, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "empty upstream stream") {
+		t.Fatalf("expected empty stream error, got %v", err)
 	}
+	if ra.statusCode != http.StatusBadGateway {
+		t.Fatalf("status code = %d, want %d", ra.statusCode, http.StatusBadGateway)
+	}
+	if ra.keyCooldown < 30*time.Second {
+		t.Fatalf("cooldown = %v, want >=30s", ra.keyCooldown)
+	}
+	if in.aggCallCount != 0 || ra.metrics.Stats.InputToken != 0 || ra.metrics.Stats.OutputToken != 0 {
+		t.Fatalf("empty stream recorded usage: calls=%d stats=%+v", in.aggCallCount, ra.metrics.Stats)
+	}
+}
 
-	// Verify AggregateStreamChunks was NOT called (empty stream)
-	if in.aggCallCount != 0 {
-		t.Fatalf("expected AggregateStreamChunks NOT to be called for empty stream, got %d calls", in.aggCallCount)
-	}
-
-	// Verify no tokens recorded
-	if ra.metrics.Stats.InputToken != 0 {
-		t.Fatalf("expected InputToken=0 for empty stream, got %d", ra.metrics.Stats.InputToken)
-	}
-	if ra.metrics.Stats.OutputToken != 0 {
-		t.Fatalf("expected OutputToken=0 for empty stream, got %d", ra.metrics.Stats.OutputToken)
+func TestWriteStream_ClientDisconnectReturnsCanceled(t *testing.T) {
+	ra, _ := newTestRelayAttempt(model.Group{})
+	stream := newFakeStream()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ra.writeStream(ctx, stream); !errors.Is(err, errClientCanceled) {
+		t.Fatalf("expected client cancellation, got %v", err)
 	}
 }
 
@@ -291,6 +295,51 @@ func TestWriteStream_StreamHardTimeoutBeforeFirstEventAllowsRetry(t *testing.T) 
 	}
 	if ra.keyCooldown < 60*time.Second {
 		t.Fatalf("expected key cooldown >=60s, got %v", ra.keyCooldown)
+	}
+}
+
+func TestWriteStream_ReadErrorBeforeFirstEventAllowsRetry(t *testing.T) {
+	ra, _ := newTestRelayAttempt(model.Group{})
+	stream := newFakeStream()
+	stream.err = errors.New("upstream stream reset before event")
+	close(stream.events)
+
+	err := ra.writeStream(ra.c.Request.Context(), stream)
+	if err == nil || !strings.Contains(err.Error(), "failed to read stream event") {
+		t.Fatalf("expected pre-event read error, got %v", err)
+	}
+	if ra.responseWritten {
+		t.Fatal("expected responseWritten to stay false before first event")
+	}
+	if ra.statusCode != http.StatusBadGateway {
+		t.Fatalf("expected bad gateway status, got %d", ra.statusCode)
+	}
+	if ra.keyCooldown < 30*time.Second {
+		t.Fatalf("expected key cooldown >=30s, got %v", ra.keyCooldown)
+	}
+}
+
+func TestWriteStream_HardTimeoutAfterFirstEventStopsWrittenStream(t *testing.T) {
+	ra, recorder := newTestRelayAttempt(model.Group{StreamHardTimeOut: 1})
+	ra.durationUnit = 10 * time.Millisecond
+	stream := newFakeStream()
+	stream.events <- &httpclient.StreamEvent{Type: "message", Data: []byte("{\"choices\":[]}")}
+
+	err := ra.writeStream(ra.c.Request.Context(), stream)
+	if err == nil || !strings.Contains(err.Error(), "stream hard timeout") {
+		t.Fatalf("expected hard timeout after first event, got %v", err)
+	}
+	if !ra.responseWritten {
+		t.Fatal("expected responseWritten after first event")
+	}
+	if ra.statusCode != http.StatusGatewayTimeout {
+		t.Fatalf("expected gateway timeout status, got %d", ra.statusCode)
+	}
+	if ra.keyCooldown < 600*time.Millisecond {
+		t.Fatalf("expected scaled key cooldown >=600ms, got %v", ra.keyCooldown)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "{\"choices\":[]}") {
+		t.Fatalf("expected recorder body to contain written prefix, got %q", body)
 	}
 }
 

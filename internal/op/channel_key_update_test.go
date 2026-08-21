@@ -333,3 +333,36 @@ func TestChannelKeySaveDBFailureRefillsDirtyKeys(t *testing.T) {
 		t.Fatalf("dirty map after failure has 61=%t 62=%t 63=%t, want all true", has61, has62, has63)
 	}
 }
+
+func TestChannelUpdatePreservesDirtyKeyRuntimeState(t *testing.T) {
+	initTestDB(t)
+	resetChannelKeyTestState(t)
+
+	channel := model.Channel{ID: 1, Name: "before", Enabled: true}
+	if err := db.GetDB().Create(&channel).Error; err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	stored := model.ChannelKey{ID: 10, ChannelID: channel.ID, Enabled: true, ChannelKey: "sk-test"}
+	if err := db.GetDB().Create(&stored).Error; err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	live := stored
+	live.TotalCost = 12.5
+	live.StatusCode = 429
+	live.LastUseTimeStamp = 100
+	live.RetryAfter = 60
+	live.ConsecutiveAuthErrors = 2
+	live.LastAuthErrorTime = 99
+	seedChannelKey(live)
+	markChannelKeyCacheNeedUpdate(live.ID)
+
+	name := "after"
+	if _, err := ChannelUpdate(&model.ChannelUpdateRequest{ID: channel.ID, Name: &name}, context.Background()); err != nil {
+		t.Fatalf("ChannelUpdate: %v", err)
+	}
+	got := assertKeyCachesEqual(t, channel.ID, live.ID)
+	if got.TotalCost != live.TotalCost || got.StatusCode != live.StatusCode || got.LastUseTimeStamp != live.LastUseTimeStamp || got.RetryAfter != live.RetryAfter || got.ConsecutiveAuthErrors != live.ConsecutiveAuthErrors || got.LastAuthErrorTime != live.LastAuthErrorTime {
+		t.Fatalf("runtime state was overwritten: got %+v want %+v", got, live)
+	}
+	assertDirty(t, live.ID)
+}

@@ -18,7 +18,6 @@ import (
 	"github.com/looplj/axonhub/llm/pipeline/stream"
 	"github.com/looplj/axonhub/llm/streams"
 	"github.com/looplj/axonhub/llm/transformer"
-	"github.com/samber/lo"
 	"github.com/vrichv/octopus-pro/internal/helper"
 	dbmodel "github.com/vrichv/octopus-pro/internal/model"
 	"github.com/vrichv/octopus-pro/internal/op"
@@ -28,11 +27,19 @@ import (
 	"github.com/vrichv/octopus-pro/internal/utils/log"
 )
 
+var errClientCanceled = errors.New("client canceled")
+
 // Handler returns a Gin handler that processes inbound requests and forwards them to the upstream service.
 func Handler(inboundType llm.APIFormat) gin.HandlerFunc {
+	return relayHandler(inboundType, time.Second)
+}
+
+// relayHandler is the package-local constructor used by tests to shorten
+// configured second-based timeouts without changing production behavior.
+func relayHandler(inboundType llm.APIFormat, durationUnit time.Duration) gin.HandlerFunc {
 	inAdapter := newInbound(inboundType)
 	return func(c *gin.Context) {
-		run, err := newRelayRun(c, inboundType, inAdapter)
+		run, err := newRelayRun(c, inboundType, inAdapter, durationUnit)
 		if err != nil {
 			return
 		}
@@ -40,7 +47,7 @@ func Handler(inboundType llm.APIFormat) gin.HandlerFunc {
 	}
 }
 
-func newRelayRun(c *gin.Context, inboundType llm.APIFormat, inAdapter transformer.Inbound) (*relayRun, error) {
+func newRelayRun(c *gin.Context, inboundType llm.APIFormat, inAdapter transformer.Inbound, durationUnit time.Duration) (*relayRun, error) {
 	internalRequest, err := parseRequest(c, inboundType, inAdapter)
 	if err != nil {
 		return nil, err
@@ -50,8 +57,8 @@ func newRelayRun(c *gin.Context, inboundType llm.APIFormat, inAdapter transforme
 		availableModels, _ := op.GroupListModel(c.Request.Context())
 		if !modelAllowedByAPIKey(supportedModels, availableModels, internalRequest.Model) {
 			log.Debugf("unsupported model: model=%s supported_models=%s available=%v", internalRequest.Model, supportedModels, availableModels)
-			err := errors.New("unsupported model")
-			resp.Error(c, http.StatusBadRequest, err.Error())
+			err := errors.New("model is not allowed for this API key")
+			resp.Error(c, http.StatusForbidden, err.Error())
 			return nil, err
 		}
 	}
@@ -73,6 +80,7 @@ func newRelayRun(c *gin.Context, inboundType llm.APIFormat, inAdapter transforme
 	return &relayRun{
 		c:               c,
 		inAdapter:       inAdapter,
+		durationUnit:    durationUnit,
 		internalRequest: internalRequest,
 		metrics: &RelayMetrics{
 			APIKeyID:        apiKeyID,
@@ -84,19 +92,37 @@ func newRelayRun(c *gin.Context, inboundType llm.APIFormat, inAdapter transforme
 		iter:             iter,
 		group:            group,
 		piiFilterEnabled: c.GetBool("pii_filter_enabled"),
+		failedKeys:       make(map[string]struct{}),
 	}, nil
 }
+
+func (r *relayRun) configuredDuration(seconds int) time.Duration {
+	if seconds <= 0 {
+		return 0
+	}
+	unit := r.durationUnit
+	if unit <= 0 {
+		unit = time.Second
+	}
+	return time.Duration(seconds) * unit
+}
+
 func modelAllowedByAPIKey(supportedModels string, availableModels []string, requestedModel string) bool {
 	if supportedModels == "" {
 		return true
 	}
-	supportedModelsArray := lo.Map(strings.Split(supportedModels, ","), func(s string, _ int) string {
-		return strings.TrimSpace(s)
-	})
-	effectiveModels := lo.Filter(supportedModelsArray, func(m string, _ int) bool {
-		return lo.Contains(availableModels, m)
-	})
-	return len(effectiveModels) == 0 || lo.Contains(effectiveModels, requestedModel)
+	available := make(map[string]struct{}, len(availableModels))
+	for _, modelName := range availableModels {
+		available[modelName] = struct{}{}
+	}
+	for _, modelName := range strings.Split(supportedModels, ",") {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == requestedModel {
+			_, configured := available[modelName]
+			return configured
+		}
+	}
+	return false
 }
 
 func (r *relayRun) run() {
@@ -121,7 +147,7 @@ func (r *relayRun) run() {
 				select {
 				case <-ctx.Done():
 					log.Debugf("request context canceled, stopping retry")
-					r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
+					r.metrics.SaveCanceled(ctx, errClientCanceled, r.iter.Attempts())
 					return
 				default:
 				}
@@ -141,6 +167,10 @@ func (r *relayRun) run() {
 					return
 				}
 				if written {
+					if attempt.canceled {
+						r.metrics.SaveCanceled(ctx, err, r.iter.Attempts())
+						return
+					}
 					r.metrics.Save(ctx, false, err, r.iter.Attempts())
 					return
 				}
@@ -177,13 +207,13 @@ func (r *relayRun) run() {
 		}
 
 		// 第一轮全部为可重试错误（含限流）且存在限流等待时间 → 等待后重试
-		retryWaitMax := 2 * time.Minute // default
+		retryWaitMax := r.configuredDuration(120) // default
 		if r.group.RateLimitRetryWaitMax != nil {
 			if *r.group.RateLimitRetryWaitMax == 0 {
 				// 0 = disabled
 				break
 			}
-			retryWaitMax = time.Duration(*r.group.RateLimitRetryWaitMax) * time.Second
+			retryWaitMax = r.configuredDuration(*r.group.RateLimitRetryWaitMax)
 		}
 		if round == 0 && !hadHardError && minWait > 0 && minWait <= retryWaitMax {
 			log.Infof("all channels retryable (transient errors), waiting %v before retry (max %v)", minWait, retryWaitMax)
@@ -191,7 +221,7 @@ func (r *relayRun) run() {
 			case <-time.After(minWait):
 				continue
 			case <-ctx.Done():
-				r.metrics.Save(ctx, false, context.Canceled, r.iter.Attempts())
+				r.metrics.SaveCanceled(ctx, errClientCanceled, r.iter.Attempts())
 				return
 			}
 		}
@@ -236,6 +266,11 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 		return nil, nil
 	}
 	for _, usedKey := range orderedKeys {
+		key := relayKey(channel.ID, usedKey.ID)
+		if _, failed := r.failedKeys[key]; failed {
+			r.iter.Skip(channel.ID, usedKey.ID, channel.Name, "key already failed in this request")
+			continue
+		}
 		if r.iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
 			continue
 		}
@@ -287,6 +322,12 @@ func (ra *relayAttempt) run() (bool, error) {
 		statusCode = http.StatusBadGateway
 	}
 
+	if errors.Is(fwdErr, errClientCanceled) || (errors.Is(fwdErr, context.Canceled) && ra.c.Request.Context().Err() != nil) {
+		ra.canceled = true
+		span.End(dbmodel.AttemptCanceled, errClientCanceled.Error())
+		return true, errClientCanceled
+	}
+
 	// success path
 	if fwdErr == nil {
 		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{
@@ -327,7 +368,7 @@ func (ra *relayAttempt) run() (bool, error) {
 		resp.Error(ra.c, statusCode, fwdErr.Error())
 		return true, fmt.Errorf("channel %s bad request (400): %v", ra.channel.Name, fwdErr)
 
-	case http.StatusUnauthorized, http.StatusForbidden: // 401/403 — auth error, switch channel
+	case http.StatusUnauthorized, http.StatusForbidden: // 401/403 — try another key in the channel
 		latestKey := ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthFailure})
 		if latestKey.ID != 0 && !latestKey.Enabled {
 			log.Warnf("key %d disabled after %d consecutive auth errors (channel: %s)",
@@ -339,8 +380,12 @@ func (ra *relayAttempt) run() (bool, error) {
 			RequestFailed: 1,
 		})
 		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		if ra.failedKeys == nil {
+			ra.failedKeys = make(map[string]struct{})
+		}
+		ra.failedKeys[relayKey(ra.channel.ID, ra.usedKey.ID)] = struct{}{}
+		ra.tryNextKey = true
 		return ra.hasWrittenResponse(), fmt.Errorf("channel %s auth error (%d): %v", ra.channel.Name, statusCode, fwdErr)
-		// tryNextKey=false: 认证失败不应重试同渠道其他 key
 
 	case http.StatusTooManyRequests: // 429 — cool down this key, try next key
 		update := op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone}
@@ -355,6 +400,10 @@ func (ra *relayAttempt) run() (bool, error) {
 			WaitTime:      span.Duration().Milliseconds(),
 			RequestFailed: 1,
 		})
+		if ra.failedKeys == nil {
+			ra.failedKeys = make(map[string]struct{})
+		}
+		ra.failedKeys[relayKey(ra.channel.ID, ra.usedKey.ID)] = struct{}{}
 		ra.tryNextKey = true // 429 → 试同渠道下一个 key
 		return ra.hasWrittenResponse(), fmt.Errorf("channel %s rate limited (429): %v", ra.channel.Name, fwdErr)
 
@@ -378,7 +427,13 @@ func (ra *relayAttempt) run() (bool, error) {
 			RequestFailed: 1,
 		})
 		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
-		ra.tryNextKey = true // 未写回客户端时，试同渠道下一个 key
+		if ra.failedKeys == nil {
+			ra.failedKeys = make(map[string]struct{})
+		}
+		ra.failedKeys[relayKey(ra.channel.ID, ra.usedKey.ID)] = struct{}{}
+		// Slow-channel faults are not useful to retry against another key in the
+		// same upstream. Preserve ordinary HTTP 5xx/408 behavior.
+		ra.tryNextKey = !(ra.keyCooldown > 0 && !ra.hasWrittenResponse())
 		return ra.hasWrittenResponse(), fmt.Errorf("channel %s failed: %v", ra.channel.Name, fwdErr)
 	}
 }
@@ -405,11 +460,14 @@ func maxDuration(a, b time.Duration) time.Duration {
 	return a
 }
 
-func streamPenalty(timeoutSec int, min time.Duration, multiplier time.Duration) time.Duration {
+func streamPenalty(timeoutSec int, durationUnit, minimum time.Duration, multiplier int) time.Duration {
 	if timeoutSec <= 0 {
-		return min
+		return minimum
 	}
-	return maxDuration(time.Duration(timeoutSec)*time.Second*multiplier, min)
+	if durationUnit <= 0 {
+		durationUnit = time.Second
+	}
+	return maxDuration(time.Duration(timeoutSec)*durationUnit*time.Duration(multiplier), minimum)
 }
 
 func (ra *relayAttempt) applyTemporaryKeyCooldown() {
@@ -488,9 +546,14 @@ func parseRequest(c *gin.Context, inboundType llm.APIFormat, inAdapter transform
 	return internalRequest, nil
 }
 
-// forward forwards the request to the upstream service
+// forward forwards the request to the upstream service.
 func (ra *relayAttempt) forward() (int, error) {
 	ctx := ra.c.Request.Context()
+	if ra.piiFilterEnabled {
+		if err := plugins.EnsurePrivacyFilter(); err != nil {
+			return http.StatusInternalServerError, fmt.Errorf("privacy filter unavailable: %w", err)
+		}
+	}
 	if ra.internalRequest.RawRequest == nil {
 		return 0, fmt.Errorf("missing raw request")
 	}
@@ -535,23 +598,19 @@ func (ra *relayAttempt) forward() (int, error) {
 	processCtx := ctx
 	var cancel context.CancelFunc
 	isStreaming := ra.internalRequest.Stream != nil && *ra.internalRequest.Stream
-	if ra.group.UpstreamTimeOut > 0 && !isStreaming {
-		processCtx, cancel = context.WithTimeout(ctx, time.Duration(ra.group.UpstreamTimeOut)*time.Second)
+	upstreamTimeout := ra.configuredDuration(ra.group.UpstreamTimeOut)
+	firstEventTimeout := ra.configuredDuration(ra.group.FirstTokenTimeOut)
+	if upstreamTimeout > 0 && !isStreaming {
+		processCtx, cancel = context.WithTimeout(ctx, upstreamTimeout)
 		defer cancel()
 	}
-	// For streaming requests, set ResponseHeaderTimeout on the HTTP transport so
-	// the connection phase cannot hang longer than FirstTokenTimeOut. This is
-	// separate from writeStream's first-token timer which covers the SSE phase.
-	// We clone the shared transport to avoid affecting other concurrent requests.
-	if isStreaming && ra.group.FirstTokenTimeOut > 0 {
-		timeout := time.Duration(ra.group.FirstTokenTimeOut) * time.Second
+	// ResponseHeaderTimeout bounds the connection phase. writeStream owns the
+	// post-header first-token, idle, and hard timers.
+	if isStreaming && firstEventTimeout > 0 {
 		if transport, ok := httpClient.Transport.(*http.Transport); ok && transport != nil {
 			cloned := transport.Clone()
-			cloned.ResponseHeaderTimeout = timeout
-			httpClient = &http.Client{
-				Transport: cloned,
-				Timeout:   0,
-			}
+			cloned.ResponseHeaderTimeout = firstEventTimeout
+			httpClient = &http.Client{Transport: cloned}
 		}
 	}
 	result, err := pipeline.NewFactory(httpclient.NewHttpClientWithClient(httpClient)).
@@ -560,22 +619,31 @@ func (ra *relayAttempt) forward() (int, error) {
 			ra.outAdapter,
 			pipeline.WithMiddlewares(middlewares...),
 			pipeline.WithEmptyResponseDetection(),
+			pipeline.WithResponseTimeouts(firstEventTimeout, 0),
 		).
 		Process(processCtx, ra.internalRequest.RawRequest)
 	if err != nil {
-		if processCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-			if isStreaming && ra.group.FirstTokenTimeOut > 0 {
-				err = fmt.Errorf("first token timeout (%ds): %w", ra.group.FirstTokenTimeOut, context.DeadlineExceeded)
-			} else {
-				err = fmt.Errorf("upstream timeout (%ds): %w", ra.group.UpstreamTimeOut, context.DeadlineExceeded)
-			}
-		} else if isStreaming && ra.group.FirstTokenTimeOut > 0 && ctx.Err() == nil {
-			// Detect transport-level timeout (ResponseHeaderTimeout fired before
-			// the upstream sent any HTTP response headers).
+		if errors.Is(err, pipeline.ErrStreamFirstEventTimeout) && ctx.Err() == nil {
+			ra.statusCode = http.StatusGatewayTimeout
+			ra.keyCooldown = streamPenalty(ra.group.FirstTokenTimeOut, ra.durationUnit, ra.configuredDuration(30), 2)
+			err = fmt.Errorf("first token timeout (%ds): %w", ra.group.FirstTokenTimeOut, err)
+		} else if processCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			ra.statusCode = http.StatusGatewayTimeout
+			ra.keyCooldown = streamPenalty(ra.group.UpstreamTimeOut, ra.durationUnit, ra.configuredDuration(30), 2)
+			err = fmt.Errorf("upstream timeout (%ds): %w", ra.group.UpstreamTimeOut, context.DeadlineExceeded)
+		} else if isStreaming && firstEventTimeout > 0 && ctx.Err() == nil {
 			var urlErr *url.Error
 			if errors.As(err, &urlErr) && urlErr.Timeout() {
+				ra.statusCode = http.StatusGatewayTimeout
+				ra.keyCooldown = streamPenalty(ra.group.FirstTokenTimeOut, ra.durationUnit, ra.configuredDuration(30), 2)
 				err = fmt.Errorf("first token timeout (%ds): %w", ra.group.FirstTokenTimeOut, context.DeadlineExceeded)
 			}
+		}
+		var rawHTTPError *httpclient.Error
+		if isStreaming && ctx.Err() == nil && ra.statusCode == 0 &&
+			!errors.Is(err, plugins.ErrRateLimited) && !errors.As(err, &rawHTTPError) {
+			ra.statusCode = http.StatusBadGateway
+			ra.keyCooldown = maxDuration(ra.configuredDuration(30), ra.keyCooldown)
 		}
 		logFields.URL = ra.upstreamURL
 		plugins.LogUpstreamError(logFields, err)
@@ -598,7 +666,10 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 	if result.Stream {
 		if err := ra.writeStream(ctx, result.EventStream); err != nil {
-			return http.StatusOK, err
+			if ra.statusCode > 0 {
+				return ra.statusCode, err
+			}
+			return http.StatusBadGateway, err
 		}
 		return http.StatusOK, nil
 	}
@@ -831,8 +902,8 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 	firstTokenTimeoutSec := ra.group.FirstTokenTimeOut
 	var firstTokenTimer *time.Timer
 	var firstTokenC <-chan time.Time
-	if firstTokenTimeoutSec > 0 {
-		firstTokenTimer = time.NewTimer(time.Duration(firstTokenTimeoutSec) * time.Second)
+	if firstTokenTimeout := ra.configuredDuration(firstTokenTimeoutSec); firstTokenTimeout > 0 {
+		firstTokenTimer = time.NewTimer(firstTokenTimeout)
 		firstTokenC = firstTokenTimer.C
 		defer func() {
 			if firstTokenTimer != nil {
@@ -844,8 +915,8 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 	streamHardTimeOutSec := ra.group.StreamHardTimeOut
 	var streamHardTimer *time.Timer
 	var streamHardC <-chan time.Time
-	if streamHardTimeOutSec > 0 {
-		streamHardTimer = time.NewTimer(time.Duration(streamHardTimeOutSec) * time.Second)
+	if streamHardTimeout := ra.configuredDuration(streamHardTimeOutSec); streamHardTimeout > 0 {
+		streamHardTimer = time.NewTimer(streamHardTimeout)
 		streamHardC = streamHardTimer.C
 		defer func() {
 			if streamHardTimer != nil {
@@ -855,6 +926,7 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 	}
 
 	streamIdleTimeOutSec := ra.group.StreamIdleTimeOut
+	streamIdleTimeout := ra.configuredDuration(streamIdleTimeOutSec)
 	var streamIdleTimer *time.Timer
 	var streamIdleC <-chan time.Time
 	defer func() {
@@ -868,22 +940,22 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 		case <-ctx.Done():
 			log.Debugf("client disconnected, stopping stream")
 			_ = clientStream.Close()
-			return nil
+			return errClientCanceled
 		case <-firstTokenC:
 			ra.statusCode = http.StatusGatewayTimeout
-			ra.keyCooldown = streamPenalty(firstTokenTimeoutSec, 30*time.Second, 2)
+			ra.keyCooldown = streamPenalty(firstTokenTimeoutSec, ra.durationUnit, ra.configuredDuration(30), 2)
 			log.Warnf("first token timeout (%ds), switching channel", firstTokenTimeoutSec)
 			_ = clientStream.Close()
 			return fmt.Errorf("first token timeout (%ds)", firstTokenTimeoutSec)
 		case <-streamHardC:
 			ra.statusCode = http.StatusGatewayTimeout
-			ra.keyCooldown = streamPenalty(streamHardTimeOutSec, 60*time.Second, 1)
+			ra.keyCooldown = streamPenalty(streamHardTimeOutSec, ra.durationUnit, ra.configuredDuration(60), 1)
 			log.Warnf("stream hard timeout (%ds), stopping stream", streamHardTimeOutSec)
 			_ = clientStream.Close()
 			return fmt.Errorf("stream hard timeout (%ds)", streamHardTimeOutSec)
 		case <-streamIdleC:
 			ra.statusCode = http.StatusGatewayTimeout
-			ra.keyCooldown = streamPenalty(streamIdleTimeOutSec, 60*time.Second, 2)
+			ra.keyCooldown = streamPenalty(streamIdleTimeOutSec, ra.durationUnit, ra.configuredDuration(60), 2)
 			log.Warnf("stream idle timeout (%ds), stopping stream", streamIdleTimeOutSec)
 			_ = clientStream.Close()
 			return fmt.Errorf("stream idle timeout (%ds)", streamIdleTimeOutSec)
@@ -891,7 +963,9 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			if !ok {
 				log.Debugf("stream end")
 				if len(responseEvents) == 0 {
-					return nil
+					ra.statusCode = http.StatusBadGateway
+					ra.keyCooldown = maxDuration(ra.configuredDuration(30), ra.keyCooldown)
+					return errors.New("empty upstream stream")
 				}
 				// Check for upstream content filter before aggregating usage.
 				// The upstream may return a successful HTTP stream with finish_reason "content_filter",
@@ -900,7 +974,7 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 				if hasContentFilterFinishReason(responseEvents) {
 					log.Warnf("upstream content filter detected, marking as failure")
 					ra.statusCode = http.StatusBadGateway
-					ra.keyCooldown = maxDuration(30*time.Second, ra.keyCooldown)
+					ra.keyCooldown = maxDuration(ra.configuredDuration(30), ra.keyCooldown)
 					return fmt.Errorf("upstream content filter: finish_reason=%s", finishReasonContentFilter)
 				}
 				responseBody, meta, err := ra.inAdapter.AggregateStreamChunks(context.WithoutCancel(ctx), responseEvents)
@@ -916,9 +990,9 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			if r.err != nil {
 				ra.statusCode = http.StatusBadGateway
 				if firstToken {
-					ra.keyCooldown = maxDuration(30*time.Second, ra.keyCooldown)
+					ra.keyCooldown = maxDuration(ra.configuredDuration(30), ra.keyCooldown)
 				} else {
-					ra.keyCooldown = maxDuration(60*time.Second, ra.keyCooldown)
+					ra.keyCooldown = maxDuration(ra.configuredDuration(60), ra.keyCooldown)
 				}
 				log.Warnf("failed to read event: %v", r.err)
 				return fmt.Errorf("failed to read stream event: %w", r.err)
@@ -929,7 +1003,7 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			if firstToken {
 				if msg := successShapedError(r.event.Data); msg != "" {
 					ra.statusCode = http.StatusBadGateway
-					ra.keyCooldown = maxDuration(30*time.Second, ra.keyCooldown)
+					ra.keyCooldown = maxDuration(ra.configuredDuration(30), ra.keyCooldown)
 					_ = clientStream.Close()
 					return fmt.Errorf("success-shaped upstream stream error: %s", msg)
 				}
@@ -949,8 +1023,8 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 					firstTokenTimer = nil
 					firstTokenC = nil
 				}
-				if streamIdleTimeOutSec > 0 {
-					streamIdleTimer = time.NewTimer(time.Duration(streamIdleTimeOutSec) * time.Second)
+				if streamIdleTimeout > 0 {
+					streamIdleTimer = time.NewTimer(streamIdleTimeout)
 					streamIdleC = streamIdleTimer.C
 				}
 			} else if streamIdleTimer != nil {
@@ -960,7 +1034,7 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 					default:
 					}
 				}
-				streamIdleTimer.Reset(time.Duration(streamIdleTimeOutSec) * time.Second)
+				streamIdleTimer.Reset(streamIdleTimeout)
 			}
 
 			ra.c.SSEvent(r.event.Type, r.event.Data)

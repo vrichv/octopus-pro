@@ -6,6 +6,7 @@ type AttemptStatus string
 const (
 	AttemptSuccess      AttemptStatus = "success"       // 转发成功
 	AttemptFailed       AttemptStatus = "failed"        // 转发失败
+	AttemptCanceled     AttemptStatus = "canceled"      // 客户端取消
 	AttemptCircuitBreak AttemptStatus = "circuit_break" // 熔断跳过
 	AttemptSkipped      AttemptStatus = "skipped"       // 其他原因跳过（禁用、无Key、类型不兼容等）
 )

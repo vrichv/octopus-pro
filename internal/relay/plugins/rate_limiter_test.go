@@ -219,8 +219,8 @@ func TestModelRateLimitMiddleware(t *testing.T) {
 func TestDualLayerRateLimiter(t *testing.T) {
 	ch := &model.Channel{
 		ID:             9001,
-		RateLimit:      "10/1s",       // key-level: 10 req/s
-		ModelRateLimit: "gpt-4=1/1s",  // model-level: 1 req/s for gpt-4
+		RateLimit:      "10/1s",      // key-level: 10 req/s
+		ModelRateLimit: "gpt-4=1/1s", // model-level: 1 req/s for gpt-4
 	}
 	m := NewRateLimiter(ch, 42, "gpt-4").(*rateLimiterMiddleware)
 
@@ -253,6 +253,28 @@ func TestDualLayerRateLimiter(t *testing.T) {
 	}
 	if !errors.Is(err, ErrRateLimited) {
 		t.Errorf("expected ErrRateLimited, got %v", err)
+	}
+}
+
+func TestDualLayerFailureDoesNotConsumeEarlierLimit(t *testing.T) {
+	ch := &model.Channel{
+		ID:             9003,
+		RateLimit:      "1/1h",
+		ModelRateLimit: "gpt-4=1/1h",
+	}
+	keyLimiter := getOrCreateLimiter("ch:9003:k:42", 1, time.Hour)
+	if err := keyLimiter.TryAllow(); err != nil {
+		t.Fatalf("preload key limiter: %v", err)
+	}
+	m := NewRateLimiter(ch, 42, "gpt-4").(*rateLimiterMiddleware)
+	if _, err := m.OnOutboundRawRequest(context.Background(), &httpclient.Request{}); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("expected key limit rejection, got %v", err)
+	}
+	modelLimiter := getOrCreateLimiter("ch:9003:m:gpt-4", 1, time.Hour)
+	modelLimiter.mu.Lock()
+	defer modelLimiter.mu.Unlock()
+	if len(modelLimiter.window) != 0 {
+		t.Fatalf("rejected request consumed model quota: %d entries", len(modelLimiter.window))
 	}
 }
 
