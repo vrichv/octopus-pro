@@ -69,13 +69,15 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadge
                             <Badge
                                 className={cn(
                                     "h-5 shrink-0 px-1.5 text-[10px] font-bold uppercase shadow-none border-0",
-                                    attempt.status === 'success'
-                                        ? "bg-primary/15 text-primary"
-                                        : "bg-destructive/15 text-destructive"
-                                )}
-                            >
-                                {attempt.status === 'success' ? t('success') : t('failed')}
-                            </Badge>
+									attempt.status === 'success'
+										? "bg-primary/15 text-primary"
+										: attempt.status === 'canceled'
+											? "bg-muted text-muted-foreground"
+											: "bg-destructive/15 text-destructive"
+								)}
+							>
+								{attempt.status === 'success' ? t('success') : attempt.status === 'canceled' ? t('canceled') : t('failed')}
+							</Badge>
                             <div className="flex min-w-0 flex-col flex-1">
                                 <span className="truncate text-xs font-semibold text-foreground">
                                     {attempt.channel_name}

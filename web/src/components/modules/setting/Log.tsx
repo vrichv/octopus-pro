@@ -116,16 +116,24 @@ export function SettingLog() {
         const hours = Number.isNaN(parsedHours) ? 24 : Math.min(96, Math.max(1, parsedHours));
         setAnalysisHours(String(hours));
         setIsExporting(true);
-        exportAnalysis.mutate(hours, {
-            onSuccess: (data) => {
-				toast.success(t('log.export.success', { file: data.file, records: data.records }));
-                setIsExporting(false);
-            },
-            onError: () => {
+		exportAnalysis.mutate(hours, {
+			onSuccess: ({ blob, filename }) => {
+				const url = URL.createObjectURL(blob);
+				const anchor = document.createElement('a');
+				anchor.href = url;
+				anchor.download = filename;
+				document.body.appendChild(anchor);
+				anchor.click();
+				anchor.remove();
+				URL.revokeObjectURL(url);
+				toast.success(t('log.export.success'));
+				setIsExporting(false);
+			},
+			onError: () => {
 				toast.error(t('log.export.failed'));
-                setIsExporting(false);
-            }
-        });
+				setIsExporting(false);
+			}
+		});
     };
 
     return (

@@ -290,6 +290,8 @@
             },
             "lastSync": "Last Sync",
             "neverSynced": "Never synced",
+            "running": "Synchronization is running",
+            "syncStarted": "Channel synchronization started",
             "syncSuccess": "Channel synced successfully",
             "syncFailed": "Failed to sync channel"
         },
@@ -360,7 +362,7 @@
 				"hours": "hours",
 				"button": "Export Analysis",
 				"exporting": "Exporting...",
-				"success": "Log analysis exported: {file}, {records} records",
+				"success": "Log analysis downloaded",
 				"failed": "Failed to export log analysis"
 			}
         }
@@ -479,6 +481,7 @@
             "retryDetails": "Retry Details",
             "attempts": "attempts",
             "success": "Success",
+            "canceled": "Canceled",
             "failed": "Failed"
         }
     },

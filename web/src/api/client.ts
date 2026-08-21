@@ -102,6 +102,26 @@ async function request<T>(
     return handleResponse<T>(response);
 }
 
+async function download(path: string, params?: Record<string, string | number | boolean>): Promise<{ blob: Blob; filename: string }> {
+	const searchParams = params ? new URLSearchParams(
+		Object.entries(params).map(([key, value]) => [key, String(value)])
+	).toString() : '';
+	const headers = new Headers();
+	if (typeof window !== 'undefined' && getAuthStore) {
+		const store = getAuthStore();
+		if (store.token) {
+			headers.set('Authorization', `Bearer ${store.token}`);
+		}
+	}
+	const response = await fetch(`${API_BASE_URL}${path}${searchParams ? `?${searchParams}` : ''}`, { headers });
+	if (!response.ok) {
+		return handleResponse<never>(response);
+	}
+	const disposition = response.headers.get('content-disposition') ?? '';
+	const filename = disposition.match(/filename=([^;]+)/i)?.[1]?.replaceAll('"', '') || 'export_analysis.json';
+	return { blob: await response.blob(), filename };
+}
+
 /**
  * API 客户端 - 基础 HTTP 方法
  */
@@ -135,5 +155,8 @@ export const apiClient = {
      */
     patch: <T>(path: string, data?: unknown, params?: Record<string, string | number | boolean>): Promise<T> =>
         request<T>('PATCH', path, data ? JSON.stringify(data) : undefined, params),
+
+	/** Download an authenticated binary response. */
+	download,
 };
 

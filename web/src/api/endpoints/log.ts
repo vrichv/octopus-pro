@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 /**
  * 尝试状态
  */
-export type AttemptStatus = 'success' | 'failed' | 'circuit_break' | 'skipped';
+export type AttemptStatus = 'success' | 'failed' | 'canceled' | 'circuit_break' | 'skipped';
 
 /**
  * 单次渠道尝试信息
@@ -84,21 +84,19 @@ export function useClearLogs() {
 }
 
 export interface ExportAnalysisResult {
-    file: string;
-    records: number;
+    blob: Blob;
+    filename: string;
 }
 
-/**
- * 导出日志分析 Hook
- */
+/** Download a bounded JSON analysis export. */
 export function useExportAnalysis() {
     return useMutation({
         mutationFn: async (hours: number = 24) => {
-            return apiClient.get<ExportAnalysisResult>('/api/v1/log/export-analysis', { hours });
+            return apiClient.download('/api/v1/log/export-analysis', { hours });
         },
-        onError: (error) => {
-            logger.error('日志分析导出失败:', error);
-        },
+		onError: (error) => {
+			logger.error('日志分析导出失败:', error);
+		},
     });
 }
 

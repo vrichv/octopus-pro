@@ -290,6 +290,8 @@
             },
             "lastSync": "上次同步",
             "neverSynced": "从未同步",
+            "running": "同步正在运行",
+            "syncStarted": "渠道同步已启动",
             "syncSuccess": "渠道同步成功",
             "syncFailed": "渠道同步失败"
         },
@@ -360,7 +362,7 @@
 				"hours": "小时",
 				"button": "导出分析",
 				"exporting": "导出中...",
-				"success": "日志分析已导出: {file}，共 {records} 条记录",
+				"success": "日志分析已下载",
 				"failed": "日志分析导出失败"
 			}
         }
@@ -479,6 +481,7 @@
             "retryDetails": "重试详情",
             "attempts": "次尝试",
             "success": "成功",
+            "canceled": "已取消",
             "failed": "失败"
         }
     },

@@ -290,6 +290,8 @@
             },
             "lastSync": "上次同步",
             "neverSynced": "從未同步",
+            "running": "同步正在執行",
+            "syncStarted": "供應源同步已啟動",
             "syncSuccess": "供應源同步成功",
             "syncFailed": "供應源同步失敗"
         },
@@ -360,7 +362,7 @@
 				"hours": "小時",
 				"button": "匯出分析",
 				"exporting": "匯出中...",
-				"success": "日誌分析已匯出: {file}，共 {records} 筆記錄",
+				"success": "日誌分析已下載",
 				"failed": "日誌分析匯出失敗"
 			}
         }
@@ -479,6 +481,7 @@
             "retryDetails": "重試詳情",
             "attempts": "次嘗試",
             "success": "成功",
+            "canceled": "已取消",
             "failed": "失敗"
         }
     },

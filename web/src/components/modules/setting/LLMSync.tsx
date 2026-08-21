@@ -6,7 +6,7 @@ import { RefreshCw, Clock } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
-import { useLastSyncTime, useSyncChannel } from '@/api/endpoints/channel';
+import { useLastSyncTime, useModelSyncStatus, useSyncChannel } from '@/api/endpoints/channel';
 import { toast } from '@/components/common/Toast';
 
 export function SettingLLMSync() {
@@ -15,6 +15,7 @@ export function SettingLLMSync() {
     const setSetting = useSetSetting();
     const syncChannel = useSyncChannel();
     const { data: lastSyncTime } = useLastSyncTime();
+    const { data: syncStatus } = useModelSyncStatus();
 
     const [syncInterval, setSyncInterval] = useState('');
     const initialSyncInterval = useRef('');
@@ -42,12 +43,8 @@ export function SettingLLMSync() {
 
     const handleManualSync = () => {
         syncChannel.mutate(undefined, {
-            onSuccess: () => {
-                toast.success(t('llmSync.syncSuccess'));
-            },
-            onError: () => {
-                toast.error(t('llmSync.syncFailed'));
-            }
+            onSuccess: () => toast.success(t('llmSync.syncStarted')),
+            onError: () => toast.error(t('llmSync.syncFailed')),
         });
     };
 
@@ -89,17 +86,21 @@ export function SettingLLMSync() {
                         <span className="text-sm font-medium">{t('llmSync.manualSync.label')}</span>
                     </div>
                     <span className="text-xs text-muted-foreground ml-8">
-                        {t('llmSync.lastSync')}: {formatLastSyncTime(lastSyncTime)}
+                        {syncStatus?.running
+                            ? t('llmSync.running')
+                            : `${t('llmSync.lastSync')}: ${formatLastSyncTime(lastSyncTime)}`}
                     </span>
                 </div>
                 <Button
                     variant="outline"
                     size="sm"
                     onClick={handleManualSync}
-                    disabled={syncChannel.isPending}
+                    disabled={syncChannel.isPending || syncStatus?.running}
                     className="rounded-xl"
                 >
-                    {syncChannel.isPending ? t('llmSync.manualSync.syncing') : t('llmSync.manualSync.button')}
+                    {syncChannel.isPending || syncStatus?.running
+                        ? t('llmSync.manualSync.syncing')
+                        : t('llmSync.manualSync.button')}
                 </Button>
             </div>
         </div>

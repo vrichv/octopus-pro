@@ -366,27 +366,35 @@ export function useLastSyncTime() {
         refetchInterval: 30000,
     });
 }
-/**
- * 同步渠道 Hook
- * 
- * @example
- * const syncChannel = useSyncChannel();
- * 
- * syncChannel.mutate();
- */
+export type ModelSyncStatus = {
+    running: boolean;
+    started_at: string;
+    finished_at: string;
+    last_error?: string;
+};
+
 export function useSyncChannel() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async () => {
-            return apiClient.post<null>('/api/v1/channel/sync');
+            return apiClient.post<ModelSyncStatus>('/api/v1/channel/sync');
         },
         onSuccess: () => {
-            logger.log('渠道同步成功');
+            logger.log('渠道同步已启动');
             queryClient.invalidateQueries({ queryKey: ['channels', 'last-sync-time'] });
+            queryClient.invalidateQueries({ queryKey: ['channels', 'sync-status'] });
         },
         onError: (error) => {
-            logger.error('渠道同步失败:', error);
+            logger.error('渠道同步启动失败:', error);
         },
+    });
+}
+
+export function useModelSyncStatus() {
+    return useQuery({
+        queryKey: ['channels', 'sync-status'],
+        queryFn: async () => apiClient.get<ModelSyncStatus>('/api/v1/channel/sync-status'),
+        refetchInterval: (query) => query.state.data?.running ? 2000 : 30000,
     });
 }
 
