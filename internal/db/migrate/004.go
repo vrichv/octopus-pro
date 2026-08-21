@@ -21,27 +21,8 @@ func addRateLimitAndKeyModeColumns(db *gorm.DB) error {
 
 	dialect := db.Dialector.Name()
 
-	hasColumn := func(table, column string) bool {
-		switch dialect {
-		case "sqlite":
-			var name string
-			db.Raw("SELECT name FROM pragma_table_info(?) WHERE name = ? LIMIT 1", table, column).Scan(&name)
-			return name == column
-		case "mysql":
-			var count int64
-			db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?", table, column).Scan(&count)
-			return count > 0
-		case "postgres":
-			var count int64
-			db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", table, column).Scan(&count)
-			return count > 0
-		default:
-			return db.Migrator().HasColumn(table, column)
-		}
-	}
-
 	addColumn := func(table, column, typ, def string) error {
-		if hasColumn(table, column) {
+		if HasColumn(db, table, column) {
 			return nil
 		}
 		var sql string

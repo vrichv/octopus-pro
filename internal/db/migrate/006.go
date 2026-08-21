@@ -21,7 +21,8 @@ func addAPIKeyPIIFilterColumn(db *gorm.DB) error {
 	}
 
 	dialect := db.Dialector.Name()
-	if !hasPIIFilterColumn(db, dialect) {
+
+	if !HasColumn(db, "api_keys", "pii_filter_enabled") {
 		var sql string
 		switch dialect {
 		case "mysql":
@@ -50,23 +51,4 @@ func addAPIKeyPIIFilterColumn(db *gorm.DB) error {
 		return fmt.Errorf("failed to delete privacy_filter_enabled setting: %w", err)
 	}
 	return nil
-}
-
-func hasPIIFilterColumn(db *gorm.DB, dialect string) bool {
-	switch dialect {
-	case "sqlite":
-		var name string
-		db.Raw("SELECT name FROM pragma_table_info(?) WHERE name = ? LIMIT 1", "api_keys", "pii_filter_enabled").Scan(&name)
-		return name == "pii_filter_enabled"
-	case "mysql":
-		var count int64
-		db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?", "api_keys", "pii_filter_enabled").Scan(&count)
-		return count > 0
-	case "postgres":
-		var count int64
-		db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", "api_keys", "pii_filter_enabled").Scan(&count)
-		return count > 0
-	default:
-		return db.Migrator().HasColumn("api_keys", "pii_filter_enabled")
-	}
 }

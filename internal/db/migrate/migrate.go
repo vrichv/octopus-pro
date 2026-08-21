@@ -148,7 +148,7 @@ func HasColumn(db *gorm.DB, table, column string) bool {
 		return count > 0
 	case "postgres":
 		var count int64
-		db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", table, column).Scan(&count)
+		db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?", table, column).Scan(&count)
 		return count > 0
 	default:
 		return db.Migrator().HasColumn(table, column)
