@@ -2,21 +2,25 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useTranslations } from 'next-intl';
-import { DollarSign, Clock, RefreshCw } from 'lucide-react';
+import { DollarSign, Clock, DatabaseBackup, HelpCircle, RefreshCw } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
-import { useUpdateModelPrice, useLastUpdateTime } from '@/api/endpoints/model';
+import { useRebuildModelPrice, useUpdateModelPrice, useLastUpdateTime } from '@/api/endpoints/model';
 import { toast } from '@/components/common/Toast';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 
 export function SettingLLMPrice() {
     const t = useTranslations('setting');
     const { data: settings } = useSettingList();
     const setSetting = useSetSetting();
     const updatePrice = useUpdateModelPrice();
+    const rebuildPrice = useRebuildModelPrice();
     const { data: lastUpdateTime } = useLastUpdateTime();
 
     const [updateInterval, setUpdateInterval] = useState('');
+    const [confirmRebuild, setConfirmRebuild] = useState(false);
+    const [rebuildCountdown, setRebuildCountdown] = useState(0);
     const initialUpdateInterval = useRef('');
 
     useEffect(() => {
@@ -28,6 +32,12 @@ export function SettingLLMPrice() {
             }
         }
     }, [settings]);
+
+    useEffect(() => {
+        if (!confirmRebuild || rebuildCountdown <= 0) return;
+        const timer = window.setTimeout(() => setRebuildCountdown((seconds) => seconds - 1), 1000);
+        return () => window.clearTimeout(timer);
+    }, [confirmRebuild, rebuildCountdown]);
 
     const handleSave = (key: string, value: string, initialValue: string) => {
         if (value === initialValue) return;
@@ -47,6 +57,22 @@ export function SettingLLMPrice() {
             },
             onError: () => {
                 toast.error(t('llmPrice.updateFailed'));
+            }
+        });
+    };
+
+    const handleRebuild = () => {
+        if (rebuildCountdown > 0) return;
+        rebuildPrice.mutate(undefined, {
+            onSuccess: ({ count }) => {
+                setConfirmRebuild(false);
+                setRebuildCountdown(0);
+                toast.success(t('llmPrice.rebuild.success', { count }));
+            },
+            onError: () => {
+                setConfirmRebuild(false);
+                setRebuildCountdown(0);
+                toast.error(t('llmPrice.rebuild.failed'));
             }
         });
     };
@@ -101,6 +127,68 @@ export function SettingLLMPrice() {
                 >
                     {updatePrice.isPending ? t('llmPrice.manualUpdate.updating') : t('llmPrice.manualUpdate.button')}
                 </Button>
+            </div>
+
+            {/* 重建价格数据 */}
+            <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                    <DatabaseBackup className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">{t('llmPrice.rebuild.label')}</span>
+                    <TooltipProvider>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <span className="inline-flex">
+                                    <HelpCircle className="size-4 text-muted-foreground cursor-help" />
+                                </span>
+                            </TooltipTrigger>
+                            <TooltipContent className="whitespace-pre-line text-center">
+                                {t('llmPrice.rebuild.description')}
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
+                </div>
+                {!confirmRebuild ? (
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                            setRebuildCountdown(3);
+                            setConfirmRebuild(true);
+                        }}
+                        disabled={rebuildPrice.isPending}
+                        className="rounded-xl"
+                    >
+                        {t('llmPrice.rebuild.button')}
+                    </Button>
+                ) : (
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                                setConfirmRebuild(false);
+                                setRebuildCountdown(0);
+                            }}
+                            disabled={rebuildPrice.isPending}
+                            className="rounded-xl"
+                        >
+                            {t('llmPrice.rebuild.cancel')}
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={handleRebuild}
+                            disabled={rebuildCountdown > 0 || rebuildPrice.isPending}
+                            className="min-w-24 rounded-xl"
+                        >
+                            {rebuildPrice.isPending
+                                ? t('llmPrice.rebuild.rebuilding')
+                                : rebuildCountdown > 0
+                                    ? `${rebuildCountdown}s`
+                                    : t('llmPrice.rebuild.confirm')}
+                        </Button>
+                    </div>
+                )}
             </div>
         </div>
     );

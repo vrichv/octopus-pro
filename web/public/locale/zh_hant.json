@@ -6,6 +6,7 @@
         "passwordPlaceholder": "請輸入密碼",
         "apikey": "API 金鑰",
         "apikeyPlaceholder": "請輸入 API 金鑰 (sk-octopus-...)",
+        "trustDevice": "信任此裝置",
         "mode": {
             "user": "帳戶登入",
             "apikey": "金鑰登入"
@@ -264,7 +265,17 @@
             "lastUpdate": "上次更新",
             "neverUpdated": "從未更新",
             "updateSuccess": "價格更新成功",
-            "updateFailed": "價格更新失敗"
+            "updateFailed": "價格更新失敗",
+            "rebuild": {
+                "label": "重建價格資料",
+                "description": "重新匹配並清理模型價格\n會重置手動設定的價格",
+                "button": "重建",
+                "cancel": "取消",
+                "confirm": "確認重建",
+                "rebuilding": "重建中...",
+                "success": "價格資料重建成功，共處理 {count} 個模型",
+                "failed": "價格資料重建失敗"
+            }
         },
         "llmSync": {
             "title": "供應源同步",

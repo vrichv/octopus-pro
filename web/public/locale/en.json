@@ -6,6 +6,7 @@
         "passwordPlaceholder": "Enter your password",
         "apikey": "API Key",
         "apikeyPlaceholder": "Enter your API Key (sk-octopus-...)",
+        "trustDevice": "Trust this device",
         "mode": {
             "user": "Account",
             "apikey": "API Key"
@@ -264,7 +265,17 @@
             "lastUpdate": "Last Update",
             "neverUpdated": "Never updated",
             "updateSuccess": "Price updated successfully",
-            "updateFailed": "Failed to update price"
+            "updateFailed": "Failed to update price",
+            "rebuild": {
+                "label": "Rebuild price data",
+                "description": "Rematch and clean up model prices\nManually configured prices will be reset",
+                "button": "Rebuild",
+                "cancel": "Cancel",
+                "confirm": "Confirm rebuild",
+                "rebuilding": "Rebuilding...",
+                "success": "Price data rebuilt for {count} models",
+                "failed": "Failed to rebuild price data"
+            }
         },
         "llmSync": {
             "title": "Channel Sync",

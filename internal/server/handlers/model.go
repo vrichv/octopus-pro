@@ -43,6 +43,10 @@ func init() {
 				Handle(updateLLMPrice),
 		).
 		AddRoute(
+			router.NewRoute("/rebuild-price", http.MethodPost).
+				Handle(rebuildLLMPrice),
+		).
+		AddRoute(
 			router.NewRoute("/last-update-time", http.MethodGet).
 				Handle(getLastUpdateTime),
 		)
@@ -125,12 +129,7 @@ func listLLM(c *gin.Context) {
 }
 
 func listLLMByChannel(c *gin.Context) {
-	channels, err := op.ChannelLLMList(c.Request.Context())
-	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	resp.Success(c, channels)
+	resp.Success(c, op.ChannelLLMList())
 }
 
 func createLLM(c *gin.Context) {
@@ -181,6 +180,33 @@ func updateLLMPrice(c *gin.Context) {
 		return
 	}
 	resp.Success(c, nil)
+}
+
+func rebuildLLMPrice(c *gin.Context) {
+	ctx := c.Request.Context()
+	if err := op.LLMCleanupGhosts(ctx); err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	llmInfos, err := op.LLMList(ctx)
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for i := range llmInfos {
+		maxContext := llmInfos[i].MaxContext
+		llmInfos[i].LLMPrice = model.LLMPrice{MaxContext: maxContext}
+		if modelPrice := price.LookupCalibratedPrice(llmInfos[i].Name); modelPrice != nil {
+			llmInfos[i].LLMPrice = *modelPrice
+			llmInfos[i].MaxContext = maxContext
+		}
+	}
+	if err := op.LLMBatchSave(llmInfos, ctx); err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, gin.H{"count": len(llmInfos)})
 }
 
 func getLastUpdateTime(c *gin.Context) {

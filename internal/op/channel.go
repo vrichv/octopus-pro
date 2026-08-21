@@ -498,7 +498,7 @@ func ChannelDel(id int, ctx context.Context) error {
 	return nil
 }
 
-func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
+func ChannelLLMList() []model.LLMChannel {
 	models := []model.LLMChannel{}
 	for _, channel := range channelCache.GetAll() {
 		modelNames := xstrings.SplitTrimCompact(",", channel.Model, channel.CustomModel)
@@ -514,7 +514,7 @@ func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
 			})
 		}
 	}
-	return models, nil
+	return models
 }
 
 func ChannelGet(id int, ctx context.Context) (*model.Channel, error) {

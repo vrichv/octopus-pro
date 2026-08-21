@@ -12,19 +12,19 @@ from pathlib import Path
 
 LLM_PRICE_URL = "https://models.dev/api.json"
 
-PROVIDERS = [
-    "openai",      # GPT 系列
-    "anthropic",   # Claude 系列
-    "google",      # Gemini 系列
-    "deepseek",    # DeepSeek 系列
-    "xai",         # Grok 系列
-    "alibaba",     # Qwen 系列
-    "zhipuai",     # GLM 系列
-    "minimax",     # MiniMax 系列
-    "moonshotai",  # Kimi/Moonshot
-    "xiaomi",      # 小米/Xiaomi 系列 (MiMo)
-    "v0",          # v0 系列
-]
+DEVELOPERS: dict[str, tuple[str, ...]] = {
+    "openai": ("gpt", "o"),
+    "anthropic": ("claude",),
+    "google": ("gemini", "gemma", "lyria", "veo"),
+    "deepseek": ("deepseek",),
+    "xai": ("grok",),
+    "alibaba": ("qwen", "qvq"),
+    "zhipuai": ("glm",),
+    "minimax": ("minimax",),
+    "moonshotai": ("kimi",),
+    "v0": ("v0",),
+    "xiaomi": ("mimo",),
+}
 
 # 其他模型别名映射 (非 Claude)
 MODEL_ALIASES: dict[str, list[str]] = {
@@ -155,7 +155,7 @@ def main():
     seen_ids: set[str] = set()
     model_count = 0
 
-    for provider in PROVIDERS:
+    for provider, family_prefixes in DEVELOPERS.items():
         if provider not in raw_price:
             print(f"  Provider '{provider}' not found, skipping...")
             continue
@@ -165,11 +165,17 @@ def main():
 
         for model_data in models.values():
             model_id = model_data.get("id", "").lower()
+            family = str(model_data.get("family") or "").lower()
             cost = model_data.get("cost", {})
+            modalities = model_data.get("modalities") or {}
+            outputs = modalities.get("output") or []
 
             if not model_id:
                 continue
-
+            if "text" not in outputs or "embed" in model_id or "embed" in family:
+                continue
+            if not any(family.startswith(prefix) for prefix in family_prefixes):
+                continue
             # 添加原始模型（跨 provider 去重，避免 Go map 重复 key）
             if model_id not in seen_ids:
                 entries.append(generate_entry(model_id, cost))

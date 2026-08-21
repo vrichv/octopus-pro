@@ -5,6 +5,7 @@ import { motion } from "motion/react"
 import { useTranslations } from 'next-intl'
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Switch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
 import { useLogin } from "@/api/endpoints/user"
 import { useAPIKeyLogin } from "@/api/endpoints/apikey"
@@ -28,8 +29,8 @@ export function LoginForm({ onLoginSuccess }: { onLoginSuccess?: () => void }) {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [apiKey, setApiKey] = useState("")
+  const [trustDevice, setTrustDevice] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
   const loginMutation = useLogin()
   const apiKeyLoginMutation = useAPIKeyLogin()
 
@@ -42,7 +43,7 @@ export function LoginForm({ onLoginSuccess }: { onLoginSuccess?: () => void }) {
         await loginMutation.mutateAsync({
           username,
           password,
-          expire: 86400,
+          expire: trustDevice ? -1 : 86400,
         })
       } else {
         await apiKeyLoginMutation.mutateAsync(apiKey)
@@ -126,6 +127,17 @@ export function LoginForm({ onLoginSuccess }: { onLoginSuccess?: () => void }) {
                     required={mode === 'user'}
                     disabled={isPending}
                   />
+                </Field>
+                <Field orientation="horizontal" data-disabled={isPending}>
+                  <Switch
+                    id="trust-device"
+                    checked={trustDevice}
+                    onCheckedChange={setTrustDevice}
+                    disabled={isPending}
+                  />
+                  <FieldLabel htmlFor="trust-device" className="text-muted-foreground">
+                    {t('trustDevice')}
+                  </FieldLabel>
                 </Field>
               </TabsContent>
               <TabsContent value="apikey">
