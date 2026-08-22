@@ -127,7 +127,7 @@ func (m *RelayMetrics) SaveCanceled(ctx context.Context, err error, attempts []m
 			OutputCost:  m.Stats.OutputCost,
 		})
 	}
-	log.Infof("relay canceled: model=%s, channel=%d(%s), duration=%dms, input_token=%d, output_token=%d, attempts=%d",
+	log.Infof("relay aborted by client disconnect: model=%s, channel=%d(%s), duration=%dms, input_token=%d, output_token=%d, attempts=%d",
 		m.RequestModel, channelID, channelName, duration.Milliseconds(), m.Stats.InputToken, m.Stats.OutputToken, len(attempts))
 	m.saveLog(context.WithoutCancel(ctx), err, duration, attempts, channelID, channelName)
 }

@@ -983,6 +983,16 @@ func TestResilienceSuite(t *testing.T) {
 			observation := h.doChat(h.models[0], true)
 			assertObservation(t, observation, observation.Status == 200 && len(observation.Calls) == 1, "disconnect-after status=%d calls=%v", observation.Status, observation.Calls)
 			assertObservation(t, observation, strings.Contains(observation.Body, "data:"), "disconnect-after body=%q", observation.Body)
+			passiveFailure := false
+			for _, attempt := range observation.RelayLog.Attempts {
+				if attempt.Status == dbmodel.AttemptCanceled {
+					t.Fatalf("passive upstream disconnect was misclassified as client cancellation: %+v", observation.RelayLog.Attempts)
+				}
+				if attempt.Status == dbmodel.AttemptFailed && strings.Contains(attempt.Msg, "failed to read stream event") {
+					passiveFailure = true
+				}
+			}
+			assertObservation(t, observation, passiveFailure, "passive disconnect attempts=%v", observation.RelayLog.Attempts)
 		})
 
 		t.Run("empty-stream-switches", func(t *testing.T) {

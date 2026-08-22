@@ -27,7 +27,8 @@ import (
 	"github.com/vrichv/octopus-pro/internal/utils/log"
 )
 
-var errClientCanceled = errors.New("client canceled")
+// 客户端主动断开连接（读超时、手动中止或提前关闭流）时记录到审计日志的统一错误。
+var errClientCanceled = errors.New("客户端主动断开连接")
 
 // Handler returns a Gin handler that processes inbound requests and forwards them to the upstream service.
 func Handler(inboundType llm.APIFormat) gin.HandlerFunc {
@@ -817,6 +818,28 @@ func hasContentFilterFinishReason(events []*httpclient.StreamEvent) bool {
 	return false
 }
 
+// streamEventTerminates 判断客户端格式事件是否代表一次完整回答的终点：
+// 显式 finish_reason，或 OpenAI 的 "[DONE]" 哨兵。
+func streamEventTerminates(data []byte) bool {
+	if strings.TrimSpace(string(data)) == "[DONE]" {
+		return true
+	}
+	var event struct {
+		Choices []struct {
+			FinishReason *string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &event); err != nil {
+		return false
+	}
+	for _, choice := range event.Choices {
+		if choice.FinishReason != nil && *choice.FinishReason != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // writeStream writes pipeline output (client-format stream) back to the requester, preserving first-token timeout switch-channel behavior.
 func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.Stream[*httpclient.StreamEvent]) error {
 	if clientStream == nil {
@@ -832,6 +855,9 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 	firstToken := true
 	responseEvents := make([]*httpclient.StreamEvent, 0, 8)
 	usageRecorded := false
+	// 客户端已收到终止事件（finish_reason 或 [DONE]）。此后的断开视为正常结束：
+	// 拿到完整结果就关流是客户端的正常行为，不应记为取消或失败。
+	streamCompleted := false
 	type sseReadResult struct {
 		event *httpclient.StreamEvent
 		err   error
@@ -938,6 +964,19 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 	for {
 		select {
 		case <-ctx.Done():
+			if streamCompleted {
+				// 结果已完整送达后的断开按正常结束收尾；content_filter 结果仍按失败审计。
+				if hasContentFilterFinishReason(responseEvents) {
+					log.Warnf("client disconnected after content-filtered response, marking as failure")
+					ra.statusCode = http.StatusBadGateway
+					ra.keyCooldown = maxDuration(ra.configuredDuration(30), ra.keyCooldown)
+					_ = clientStream.Close()
+					return fmt.Errorf("upstream content filter: finish_reason=%s", finishReasonContentFilter)
+				}
+				log.Debugf("client disconnected after stream completed, counting as success")
+				_ = clientStream.Close()
+				return nil
+			}
 			log.Debugf("client disconnected, stopping stream")
 			_ = clientStream.Close()
 			return errClientCanceled
@@ -1010,6 +1049,7 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			}
 
 			responseEvents = append(responseEvents, r.event)
+			terminalEvent := !streamCompleted && streamEventTerminates(r.event.Data)
 			if firstToken {
 				ra.metrics.FirstTokenTime = time.Now()
 				firstToken = false
@@ -1040,6 +1080,9 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 			ra.c.SSEvent(r.event.Type, r.event.Data)
 			ra.responseWritten = true
 			ra.c.Writer.Flush()
+			if terminalEvent {
+				streamCompleted = true
+			}
 		}
 	}
 }

@@ -212,6 +212,28 @@ func TestWriteStream_EmptyStreamFailsAndSkipsUsage(t *testing.T) {
 	}
 }
 
+func TestStreamEventTerminates(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{name: "done sentinel", data: "[DONE]", want: true},
+		{name: "stop finish reason", data: `{"choices":[{"finish_reason":"stop"}]}`, want: true},
+		{name: "null finish reason", data: `{"choices":[{"finish_reason":null}]}`, want: false},
+		{name: "empty finish reason", data: `{"choices":[{"finish_reason":""}]}`, want: false},
+		{name: "ordinary content", data: `{"choices":[{"delta":{"content":"partial"}}]}`, want: false},
+		{name: "malformed payload", data: "{", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := streamEventTerminates([]byte(test.data)); got != test.want {
+				t.Fatalf("streamEventTerminates(%q)=%t want %t", test.data, got, test.want)
+			}
+		})
+	}
+}
+
 func TestWriteStream_ClientDisconnectReturnsCanceled(t *testing.T) {
 	ra, _ := newTestRelayAttempt(model.Group{})
 	stream := newFakeStream()
@@ -219,6 +241,82 @@ func TestWriteStream_ClientDisconnectReturnsCanceled(t *testing.T) {
 	cancel()
 	if err := ra.writeStream(ctx, stream); !errors.Is(err, errClientCanceled) {
 		t.Fatalf("expected client cancellation, got %v", err)
+	}
+}
+
+func TestWriteStream_DisconnectAfterFinishReasonCountsAsSuccess(t *testing.T) {
+	in := &trackingInbound{usage: &llm.Usage{PromptTokens: 10, CompletionTokens: 5}}
+	ra, recorder := newTestRelayAttemptWithInbound(model.Group{}, in)
+	stream := newFakeStream()
+	stream.events <- &httpclient.StreamEvent{Type: "message", Data: []byte(`{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}`)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond) // 让主循环先写回终止事件
+		cancel()
+		close(stream.events)
+	}()
+
+	err := ra.writeStream(ctx, stream)
+	if err != nil {
+		t.Fatalf("disconnect after finish_reason should end normally, got %v", err)
+	}
+	if !ra.responseWritten {
+		t.Fatal("expected responseWritten before disconnect")
+	}
+	if in.aggCallCount != 1 || ra.metrics.Stats.InputToken != 10 || ra.metrics.Stats.OutputToken != 5 {
+		t.Fatalf("unexpected usage recording: calls=%d stats=%+v", in.aggCallCount, ra.metrics.Stats)
+	}
+	if ra.keyCooldown != 0 || ra.statusCode != 0 {
+		t.Fatalf("success path must not penalize key: status=%d cooldown=%v", ra.statusCode, ra.keyCooldown)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "finish_reason") {
+		t.Fatalf("expected delivered SSE prefix, got %q", body)
+	}
+}
+
+func TestWriteStream_DisconnectAfterDoneSentinelCountsAsSuccess(t *testing.T) {
+	in := &trackingInbound{usage: &llm.Usage{PromptTokens: 3, CompletionTokens: 7}}
+	ra, _ := newTestRelayAttemptWithInbound(model.Group{}, in)
+	stream := newFakeStream()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		stream.events <- &httpclient.StreamEvent{Type: "message", Data: []byte(`{"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}`)}
+		stream.events <- &httpclient.StreamEvent{Type: "message", Data: []byte("[DONE]")}
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+		close(stream.events)
+	}()
+
+	if err := ra.writeStream(ctx, stream); err != nil {
+		t.Fatalf("disconnect after [DONE] sentinel should end normally, got %v", err)
+	}
+	if in.aggCallCount != 1 || ra.metrics.Stats.OutputToken != 7 {
+		t.Fatalf("unexpected usage recording: calls=%d stats=%+v", in.aggCallCount, ra.metrics.Stats)
+	}
+}
+
+func TestWriteStream_DisconnectAfterContentFilterStaysFailure(t *testing.T) {
+	ra, _ := newTestRelayAttempt(model.Group{})
+	stream := newFakeStream()
+	stream.events <- &httpclient.StreamEvent{Type: "message", Data: []byte(`{"choices":[{"index":0,"delta":{"content":"blocked"},"finish_reason":"content_filter"}]}`)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+		close(stream.events)
+	}()
+
+	err := ra.writeStream(ctx, stream)
+	if err == nil || !strings.Contains(err.Error(), "upstream content filter") {
+		t.Fatalf("expected content-filter failure, got %v", err)
+	}
+	if ra.statusCode != http.StatusBadGateway {
+		t.Fatalf("status=%d want %d", ra.statusCode, http.StatusBadGateway)
+	}
+	if ra.keyCooldown < 30*time.Second {
+		t.Fatalf("cooldown=%v want >=30s", ra.keyCooldown)
 	}
 }
 
