@@ -462,7 +462,8 @@
     },
     "log": {
         "list": {
-            "noMore": "No more logs"
+            "noMore": "No more logs",
+            "newLogs": "View {{count}} new logs"
         },
         "card": {
             "error": "Error",

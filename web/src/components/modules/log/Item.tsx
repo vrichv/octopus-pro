@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { memo, useMemo, useState, useEffect } from 'react';
 import { Clock, Cpu, Zap, AlertCircle, ArrowDownToLine, ArrowUpFromLine, DollarSign, ArrowRight, ArrowDown, Send, MessageSquare, Loader2, RotateCw, ChevronDown, ChevronUp, Pin, KeyRound } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'motion/react';
@@ -186,7 +186,9 @@ function DeferredJsonContent({ content, fallbackText }: { content: string | unde
     );
 }
 
-export function LogCard({ log }: { log: RelayLog }) {
+// SSE 合入会重建 pages 数组；memo 让未变化的卡片跳过重渲染
+// （每张卡片含 motion layout 节点与 Tooltip，渲染成本高）。
+export const LogCard = memo(function LogCard({ log }: { log: RelayLog }) {
     const t = useTranslations('log.card');
     const { Avatar: ModelAvatar, color: brandColor } = useMemo(
         () => getModelIcon(log.actual_model_name),
@@ -516,4 +518,4 @@ export function LogCard({ log }: { log: RelayLog }) {
             </MorphingDialog>
         </TooltipProvider>
     );
-}
+});

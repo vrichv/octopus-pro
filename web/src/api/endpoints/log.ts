@@ -121,6 +121,8 @@ export function useLogs(options: { pageSize?: number } = {}) {
 
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState<Error | null>(null);
+    const [liveLogs, setLiveLogs] = useState<RelayLog[]>([]);
+    const liveLogsRef = useRef<RelayLog[]>([]);
     const eventSourceRef = useRef<EventSource | null>(null);
 
     const queryClient = useQueryClient();
@@ -190,20 +192,11 @@ export function useLogs(options: { pageSize?: number } = {}) {
                 eventSource.onmessage = (event) => {
                     try {
                         const log: RelayLog = JSON.parse(event.data);
-                        queryClient.setQueryData(
-                            logsInfiniteQueryKey(pageSize),
-                            (old: InfiniteData<RelayLog[], number> | undefined) => {
-                                if (!old) {
-                                    return { pages: [[log]], pageParams: [1] };
-                                }
-
-                                const exists = old.pages.some((p) => p?.some((x) => x.id === log.id));
-                                if (exists) return old;
-
-                                const firstPage = old.pages[0] ?? [];
-                                return { ...old, pages: [[log, ...firstPage], ...old.pages.slice(1)] };
-                            }
-                        );
+                        // 不直接插入列表：滚动过程中头部插入会让虚拟列表全部行 key 位移、
+                        // 触发全量重测量，导致滚动位置被顶走。先缓冲，由顶部按钮合入。
+                        if (liveLogsRef.current.some((x) => x.id === log.id)) return;
+                        liveLogsRef.current = [log, ...liveLogsRef.current].slice(0, 100);
+                        setLiveLogs(liveLogsRef.current);
                     } catch (e) {
                         logger.error('解析日志数据失败:', e);
                     }
@@ -236,6 +229,36 @@ export function useLogs(options: { pageSize?: number } = {}) {
         queryClient.removeQueries({ queryKey: logsInfiniteQueryKey(pageSize) });
     }, [pageSize, queryClient]);
 
+    /** 把缓冲的实时日志合入列表头部（去重）。 */
+    const flushLiveLogs = useCallback(() => {
+        const buffer = liveLogsRef.current;
+        if (buffer.length === 0) return;
+        liveLogsRef.current = [];
+        setLiveLogs([]);
+        queryClient.setQueryData<InfiniteData<RelayLog[], number>>(
+            logsInfiniteQueryKey(pageSize),
+            (old) => {
+                if (!old) {
+                    return { pages: [buffer], pageParams: [1] };
+                }
+                const seen = new Set<number>();
+                for (const page of old.pages) {
+                    for (const entry of page ?? []) seen.add(entry.id);
+                }
+                const fresh = buffer.filter((entry) => !seen.has(entry.id));
+                if (fresh.length === 0) return old;
+                const firstPage = old.pages[0] ?? [];
+                return { ...old, pages: [[...fresh, ...firstPage], ...old.pages.slice(1)] };
+            }
+        );
+    }, [pageSize, queryClient]);
+
+    useEffect(() => {
+        return () => {
+            liveLogsRef.current = [];
+        };
+    }, []);
+
     return {
         logs,
         isConnected,
@@ -245,5 +268,7 @@ export function useLogs(options: { pageSize?: number } = {}) {
         isLoadingMore: logsQuery.isFetchingNextPage,
         loadMore,
         clear,
+        pendingLiveCount: liveLogs.length,
+        flushLiveLogs,
     };
 }

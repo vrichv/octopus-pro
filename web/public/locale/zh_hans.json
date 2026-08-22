@@ -462,7 +462,8 @@
     },
     "log": {
         "list": {
-            "noMore": "没有更多日志了"
+            "noMore": "没有更多日志了",
+            "newLogs": "查看 {{count}} 条新日志"
         },
         "card": {
             "error": "错误",

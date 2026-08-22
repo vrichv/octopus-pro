@@ -34,6 +34,8 @@ interface VirtualizedGridProps<T> {
     onReachEnd?: () => void;
     reachEndEnabled?: boolean;
     reachEndOffset?: number;
+    /** 变化时把滚动容器滚回顶部（用于"新日志"按钮合入后回到最新位置）。 */
+    scrollToTopSignal?: number;
 }
 
 function getColumnsForWidth(
@@ -61,6 +63,7 @@ export function VirtualizedGrid<T>({
     onReachEnd,
     reachEndEnabled = false,
     reachEndOffset = 1,
+    scrollToTopSignal,
 }: VirtualizedGridProps<T>) {
     'use no memo';
 
@@ -89,6 +92,11 @@ export function VirtualizedGrid<T>({
             observer.disconnect();
         };
     }, []);
+
+    useEffect(() => {
+        if (!scrollToTopSignal) return;
+        containerRef.current?.scrollTo({ top: 0 });
+    }, [scrollToTopSignal]);
 
     const columnCount = useMemo(() => {
         if (layout === 'list') return 1;
