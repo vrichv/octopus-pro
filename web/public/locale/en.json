@@ -585,6 +585,8 @@
             "typeXAI": "xAI / Grok",
             "typeOpenRouter": "OpenRouter",
             "typeBailian": "Bailian",
+            "typeOpenCodeZen": "OpenCode Zen",
+            "typeOpenCodeGo": "OpenCode Go",
             "autoSync": "Auto Sync",
             "autoGroup": "Auto Group",
             "autoGroupNone": "None",

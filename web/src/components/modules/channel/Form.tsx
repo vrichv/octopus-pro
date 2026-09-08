@@ -97,6 +97,8 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
     [ChannelType.OpenRouter]: 'https://openrouter.ai/api/v1',
     [ChannelType.Bailian]: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     [ChannelType.XAI]: 'https://api.x.ai/v1',
+    [ChannelType.OpenCodeZen]: 'https://opencode.ai/zen/v1',
+    [ChannelType.OpenCodeGo]: 'https://opencode.ai/zen/go/v1',
 };
 
 export function ChannelForm({
@@ -459,6 +461,8 @@ export function ChannelForm({
                             <SelectItem className='rounded-xl' value={String(ChannelType.Bailian)}>{t('typeBailian')}</SelectItem>
                             <SelectItem className='rounded-xl' value={String(ChannelType.OpenAIEmbedding)}>{t('typeOpenAIEmbedding')}</SelectItem>
                             <SelectItem className='rounded-xl' value={String(ChannelType.XAI)}>{t('typeXAI')}</SelectItem>
+                            <SelectItem className='rounded-xl' value={String(ChannelType.OpenCodeZen)}>{t('typeOpenCodeZen')}</SelectItem>
+                            <SelectItem className='rounded-xl' value={String(ChannelType.OpenCodeGo)}>{t('typeOpenCodeGo')}</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>

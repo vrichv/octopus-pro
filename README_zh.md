@@ -260,8 +260,14 @@ http://localhost:3000
 | OpenAI Images | `/images/generations`、`/images/edits`、`/images/variations` | `https://api.openai.com/v1` | `https://api.openai.com/v1/images/generations` |
 | Anthropic | `/messages` | `https://api.anthropic.com/v1` | `https://api.anthropic.com/v1/messages` |
 | Gemini | `/models/:model:generateContent` | `https://generativelanguage.googleapis.com/v1beta` | `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent` |
+| OpenCode Zen | 按模型选择 `/chat/completions`、`/responses`、`/messages` | `https://opencode.ai/zen/v1` | `https://opencode.ai/zen/v1/responses` |
+| OpenCode Go | 按模型选择 `/chat/completions`、`/responses`、`/messages` | `https://opencode.ai/zen/go/v1` | `https://opencode.ai/zen/go/v1/chat/completions` |
 
 > 💡 **提示**：填写 Base URL 时无需包含具体的 API 端点路径，程序会自动处理。
+
+**OpenCode Zen：** 旧的 `opencode` 渠道值保持为 Zen。GPT、Grok 和 Muse Spark 使用 Responses；Claude 和 Qwen 使用 Anthropic Messages；Gemini 使用 Google 协议；其余 Zen 模型使用 OpenAI Chat Completions。Zen 保持配置的 `/zen/v1` endpoint。
+
+**OpenCode Go：** 请选择独立的 OpenCode Go 类型，使用 AxonHub 的 Go 专用协议路由。它使用 `/zen/go/v1`，绝不会从 Zen URL 自动推断。两种类型均保留每个 Key 可复用的 session ID、`User-Agent: omp/18.1.14`，并移除 `x-opencode-client`。支持聊天请求，不支持 embedding 和图片请求。
 
 ---
 

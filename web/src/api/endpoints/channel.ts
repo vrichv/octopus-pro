@@ -17,6 +17,8 @@ export enum ChannelType {
     OpenRouter = 'openrouter/chat_completions',
     Bailian = 'bailian/chat_completions',
     XAI = 'xai',
+    OpenCodeZen = 'opencode',
+    OpenCodeGo = 'opencode/go',
 }
 
 /**

@@ -10,7 +10,8 @@ require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/looplj/axonhub/llm v0.0.0-20260906040855-939b2bc07cc0
+	github.com/google/uuid v1.6.0
+	github.com/looplj/axonhub/llm v0.0.0-20260908135233-0786bb37940b
 	github.com/samber/lo v1.52.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -51,7 +52,6 @@ require (
 	github.com/goccy/go-yaml v1.19.0 // indirect
 	github.com/google/jsonschema-go v0.3.1-0.20251120200837-98a387e3b975 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.11 // indirect
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
@@ -119,4 +119,4 @@ require (
 
 replace github.com/gin-contrib/sse => github.com/looplj/sse v0.0.0-20260223020440-b463add2d52f
 
-replace github.com/tmaxmax/go-sse => github.com/looplj/go-sse v0.0.0-20250909130008-e74a1155bc3b
+replace github.com/tmaxmax/go-sse => github.com/wtj-0527/go-sse v0.0.0-20260811060543-0bb36b8ea0cd

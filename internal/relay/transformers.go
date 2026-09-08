@@ -2,8 +2,10 @@ package relay
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/looplj/axonhub/llm"
+	"github.com/looplj/axonhub/llm/auth"
 	"github.com/looplj/axonhub/llm/transformer"
 	"github.com/looplj/axonhub/llm/transformer/anthropic"
 	"github.com/looplj/axonhub/llm/transformer/bailian"
@@ -12,6 +14,7 @@ import (
 	"github.com/looplj/axonhub/llm/transformer/gemini"
 	"github.com/looplj/axonhub/llm/transformer/openai"
 	"github.com/looplj/axonhub/llm/transformer/openai/responses"
+	"github.com/looplj/axonhub/llm/transformer/opencode"
 	"github.com/looplj/axonhub/llm/transformer/openrouter"
 	"github.com/looplj/axonhub/llm/transformer/xai"
 	dbmodel "github.com/vrichv/octopus-pro/internal/model"
@@ -101,10 +104,43 @@ func newOutbound(channelType llm.APIFormat, request *llm.Request, baseURL, key s
 			return bailian.NewOutboundTransformer(baseURL, key)
 		case dbmodel.ChannelTypeXAI:
 			return xai.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeOpenCodeZen:
+			return newOpenCodeZenOutbound(request, baseURL, key)
+		case dbmodel.ChannelTypeOpenCodeGo:
+			if isOpenCodeGoResponsesModel(request.Model) {
+				return responses.NewOutboundTransformer(baseURL, key)
+			}
+			return opencode.NewOutboundTransformer(baseURL, key)
 		default:
 			return nil, fmt.Errorf("channel type %s is not compatible with %s request", channelType, requestType)
 		}
 	default:
 		return nil, fmt.Errorf("%s request is not supported by relay", requestType)
 	}
+}
+
+// newOpenCodeZenOutbound follows Zen's model endpoint table. Zen and Go have
+// different protocol matrices and must not share the OpenCode Go transformer.
+func newOpenCodeZenOutbound(request *llm.Request, baseURL, key string) (transformer.Outbound, error) {
+	model := strings.ToLower(request.Model)
+	switch {
+	case strings.HasPrefix(model, "gpt"), strings.HasPrefix(model, "grok"), strings.HasPrefix(model, "muse-spark"):
+		return responses.NewOutboundTransformer(baseURL, key)
+	case strings.HasPrefix(model, "claude"), strings.HasPrefix(model, "qwen"):
+		return anthropic.NewOutboundTransformer(baseURL, key)
+	case strings.HasPrefix(model, "gemini"):
+		return gemini.NewOutboundTransformerWithConfig(gemini.Config{
+			BaseURL:        baseURL,
+			APIVersion:     "v1",
+			APIKeyProvider: auth.NewStaticKeyProvider(key),
+		})
+	default:
+		return openai.NewOutboundTransformer(baseURL, key)
+	}
+}
+
+// AxonHub's OpenCode Go transformer already routes GPT and Grok. Muse Spark
+// is also Responses-only in OpenCode Go but is absent from this version's map.
+func isOpenCodeGoResponsesModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(model), "muse-spark")
 }

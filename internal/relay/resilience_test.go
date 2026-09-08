@@ -54,6 +54,7 @@ type harnessOptions struct {
 	CircuitBreakerThreshold   *int
 	CircuitBreakerCooldown    *int
 	CircuitBreakerMaxCooldown *int
+	ChannelType               llm.APIFormat
 }
 
 type faultStep struct {
@@ -178,10 +179,14 @@ func newResilienceHarness(t *testing.T, name string, opts harnessOptions) *resil
 
 	for i := range h.channels {
 		channelID := base + i + 1
+		channelType := opts.ChannelType
+		if channelType == "" {
+			channelType = llm.APIFormatOpenAIChatCompletion
+		}
 		channel := dbmodel.Channel{
 			ID:                        channelID,
 			Name:                      h.upstreams[i].name,
-			Type:                      llm.APIFormatOpenAIChatCompletion,
+			Type:                      channelType,
 			Enabled:                   true,
 			BaseUrls:                  []dbmodel.BaseUrl{{URL: h.upstreams[i].server.URL}},
 			Model:                     h.models[0],
@@ -851,6 +856,26 @@ func TestResilienceSuite(t *testing.T) {
 		assertObservation(t, blocked, blocked.Status == http.StatusTooManyRequests, "cooldown status=%d", blocked.Status)
 		assertObservation(t, blocked, blocked.Headers.Get("Retry-After") != "", "cooldown retry-after=%q", blocked.Headers.Get("Retry-After"))
 		assertObservation(t, blocked, len(blocked.Calls) == 0, "cooldown unexpectedly reached upstream: calls=%v", blocked.Calls)
+	})
+
+	t.Run("SingleKeyHTTP5xxCooldownUsesServiceRetry", func(t *testing.T) {
+		h := newResilienceHarness(t, "single-key-http-5xx-cooldown", harnessOptions{ChannelType: dbmodel.ChannelTypeOpenCodeZen})
+		onlyKey := h.channels[0].keys[0]
+		if err := db.GetDB().Model(&dbmodel.ChannelKey{}).Where("id <> ?", onlyKey.ID).Update("enabled", false).Error; err != nil {
+			t.Fatalf("disable fallback keys: %v", err)
+		}
+		if err := op.InitCache(); err != nil {
+			t.Fatalf("reload channel cache: %v", err)
+		}
+		h.setFault(1, 0, h.models[0], faultStep{Kind: faultHTTPStatus, Status: http.StatusInternalServerError})
+
+		first := h.doChat(h.models[0], false)
+		assertObservation(t, first, len(first.Calls) == 1, "5xx upstream calls=%d", len(first.Calls))
+
+		blocked := h.doChat(h.models[0], false)
+		assertObservation(t, blocked, blocked.Status == http.StatusServiceUnavailable, "5xx cooldown status=%d", blocked.Status)
+		assertObservation(t, blocked, blocked.Headers.Get("Retry-After") != "", "5xx retry-after=%q", blocked.Headers.Get("Retry-After"))
+		assertObservation(t, blocked, len(blocked.Calls) == 0, "5xx cooldown unexpectedly reached upstream: calls=%v", blocked.Calls)
 	})
 
 	t.Run("SingleKeyStreamCooldownUsesServiceRetry", func(t *testing.T) {

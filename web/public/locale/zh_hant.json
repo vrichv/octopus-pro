@@ -585,6 +585,8 @@
             "typeXAI": "xAI / Grok",
             "typeOpenRouter": "OpenRouter",
             "typeBailian": "百煉",
+            "typeOpenCodeZen": "OpenCode Zen",
+            "typeOpenCodeGo": "OpenCode Go",
             "autoSync": "自動同步",
             "autoGroup": "自動分組",
             "autoGroupNone": "不自動分組",

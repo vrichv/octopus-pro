@@ -26,6 +26,11 @@ const ChannelTypeDeepSeek llm.APIFormat = "deepseek/chat_completions"
 const ChannelTypeOpenRouter llm.APIFormat = "openrouter/chat_completions"
 const ChannelTypeBailian llm.APIFormat = "bailian/chat_completions"
 const ChannelTypeXAI llm.APIFormat = "xai"
+const (
+	// ChannelTypeOpenCodeZen retains the legacy "opencode" value for existing Zen channels.
+	ChannelTypeOpenCodeZen llm.APIFormat = "opencode"
+	ChannelTypeOpenCodeGo  llm.APIFormat = "opencode/go"
+)
 
 type Channel struct {
 	ID                        int            `json:"id" gorm:"primaryKey"`

@@ -75,7 +75,7 @@ func TestOpenCodeSessionCacheSeparatesKeysAndIsConcurrent(t *testing.T) {
 
 func TestOpenCodeMiddlewareOverridesHeadersAndAxonHubPreservesThem(t *testing.T) {
 	middleware := &relayPipelineMiddleware{attempt: &relayAttempt{
-		channel: &dbmodel.Channel{CustomHeader: []dbmodel.CustomHeader{
+		channel: &dbmodel.Channel{Type: dbmodel.ChannelTypeOpenCodeGo, CustomHeader: []dbmodel.CustomHeader{
 			{HeaderKey: "x-opencode-session", HeaderValue: "channel-session"},
 			{HeaderKey: "x-opencode-client", HeaderValue: "channel-client"},
 			{HeaderKey: "User-Agent", HeaderValue: "channel-agent"},
@@ -84,7 +84,7 @@ func TestOpenCodeMiddlewareOverridesHeadersAndAxonHubPreservesThem(t *testing.T)
 	}}
 	request := &httpclient.Request{
 		Method: http.MethodPost,
-		URL:    "https://opencode.ai/zen/go/v1/chat/completions",
+		URL:    "https://proxy.example/v1/chat/completions",
 		Headers: http.Header{
 			"X-Opencode-Session": []string{"inbound-session"},
 			"X-Opencode-Client":  []string{"inbound-client"},

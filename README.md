@@ -259,8 +259,14 @@ The program automatically appends API paths based on channel type. You only need
 | OpenAI Images | `/images/generations`, `/images/edits`, `/images/variations` | `https://api.openai.com/v1` | `https://api.openai.com/v1/images/generations` |
 | Anthropic | `/messages` | `https://api.anthropic.com/v1` | `https://api.anthropic.com/v1/messages` |
 | Gemini | `/models/:model:generateContent` | `https://generativelanguage.googleapis.com/v1beta` | `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent` |
+| OpenCode Zen | Model-dependent: `/chat/completions`, `/responses`, `/messages` | `https://opencode.ai/zen/v1` | `https://opencode.ai/zen/v1/responses` |
+| OpenCode Go | Model-dependent: `/chat/completions`, `/responses`, `/messages` | `https://opencode.ai/zen/go/v1` | `https://opencode.ai/zen/go/v1/chat/completions` |
 
 > 💡 **Tip**: No need to include specific API endpoint paths in the Base URL - the program handles this automatically.
+
+**OpenCode Zen:** the legacy `opencode` channel value remains Zen. GPT, Grok, and Muse Spark use Responses; Claude and Qwen use Anthropic Messages; Gemini uses the Google protocol; other Zen models use OpenAI Chat Completions. Zen keeps its configured `/zen/v1` endpoint.
+
+**OpenCode Go:** select the separate OpenCode Go type for AxonHub's Go-specific protocol routing. It uses `/zen/go/v1`; it is never inferred from a Zen URL. Both types retain the per-key reusable session ID, `User-Agent: omp/18.1.14`, and removal of `x-opencode-client`. Chat requests are supported; embeddings and images are rejected.
 
 ---
 

@@ -441,6 +441,9 @@ func (ra *relayAttempt) run() (bool, error) {
 
 	default: // 5xx/timeout/stream truncation → circuit break this key, try next key when possible
 		ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthNone})
+		if isOpenCodeChannelType(ra.channel.Type) && !ra.hasWrittenResponse() && statusCode >= http.StatusInternalServerError {
+			ra.keyCooldown = maxDuration(upstreamFailureCooldown, ra.keyCooldown)
+		}
 		ra.applyTemporaryKeyCooldown()
 		span.End(dbmodel.AttemptFailed, ra.failureMessage(fwdErr))
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
@@ -480,6 +483,10 @@ func maxDuration(a, b time.Duration) time.Duration {
 	}
 	return a
 }
+
+// upstreamFailureCooldown prevents callers that retry immediately from
+// repeatedly probing the same key/model after an upstream 5xx.
+const upstreamFailureCooldown = 5 * time.Second
 
 func streamPenalty(timeoutSec int, durationUnit, minimum time.Duration, multiplier int) time.Duration {
 	if timeoutSec <= 0 {
@@ -1218,7 +1225,7 @@ func (m *relayPipelineMiddleware) OnOutboundRawRequest(ctx context.Context, requ
 	}
 	m.attempt.upstreamURL = request.URL
 	m.attempt.applyChannelRequestOptions(request)
-	if isOpenCodeEndpoint(request.URL) {
+	if isOpenCodeChannelType(m.attempt.channel.Type) || isOpenCodeEndpoint(request.URL) {
 		request.Headers.Set("x-opencode-session", openCodeSessions.sessionID(m.attempt.usedKey, time.Now()))
 		request.Headers.Del("x-opencode-client")
 		request.Headers.Set("User-Agent", "omp/18.1.14")
@@ -1230,6 +1237,10 @@ func (m *relayPipelineMiddleware) OnOutboundRawRequest(ctx context.Context, requ
 		request.Headers.Set("User-Agent", "codex_cli_rs/0.153.4 (Linux 6.18.0; x86_64) xterm-256color")
 	}
 	return request, nil
+}
+
+func isOpenCodeChannelType(channelType llm.APIFormat) bool {
+	return channelType == dbmodel.ChannelTypeOpenCodeZen || channelType == dbmodel.ChannelTypeOpenCodeGo
 }
 
 func (m *relayPipelineMiddleware) OnOutboundLlmResponse(ctx context.Context, response *llm.Response) (*llm.Response, error) {
