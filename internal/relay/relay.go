@@ -129,6 +129,7 @@ func modelAllowedByAPIKey(supportedModels string, availableModels []string, requ
 func (r *relayRun) run() {
 	ctx := r.c.Request.Context()
 	var lastErr error
+	var hadHardError bool
 
 	// Round-based retry: round 0 tries all channels/keys; if every error was
 	// transient (no 400/401/403/404), wait for the shortest rate-limit window
@@ -139,7 +140,8 @@ func (r *relayRun) run() {
 			lastErr = nil
 		}
 
-		hadHardError := false
+		r.unavailable = unavailableKeys{}
+		hadHardError = false
 		var minWait time.Duration
 
 		for r.iter.Next() {
@@ -176,6 +178,13 @@ func (r *relayRun) run() {
 					return
 				}
 				lastErr = err
+				if attempt.statusCode == http.StatusTooManyRequests {
+					r.noteUnavailable(http.StatusTooManyRequests, dbmodel.GetKeyModelCooldownRemaining(
+						attempt.channel.ID, attempt.usedKey.ID, attempt.internalRequest.Model))
+				} else if attempt.keyCooldown > 0 {
+					r.noteUnavailable(http.StatusServiceUnavailable, dbmodel.GetKeyModelCooldownRemaining(
+						attempt.channel.ID, attempt.usedKey.ID, attempt.internalRequest.Model))
+				}
 
 				// 本地限流：不阻塞等待，记录最小等待时间，立即试下一 key
 				// 同渠道所有 key 共享同一个 model 级限流器，快速失败后切下一渠道
@@ -183,9 +192,12 @@ func (r *relayRun) run() {
 					if minWait == 0 || attempt.rateLimitWait < minWait {
 						minWait = attempt.rateLimitWait
 					}
-					// 冷却当前 key 使 prepareAttempt 跳过它，避免同一 key 无限循环
-					dbmodel.RecordKeyModelTemporaryCooldown(attempt.channel.ID, attempt.usedKey.ID,
+					// Cool the key locally and preserve its 429 classification for a
+					// subsequent no-key response.
+					dbmodel.RecordKeyModelRateLimitCooldown(attempt.channel.ID, attempt.usedKey.ID,
 						attempt.internalRequest.Model, attempt.rateLimitWait)
+					r.noteUnavailable(http.StatusTooManyRequests, dbmodel.GetKeyModelCooldownRemaining(
+						attempt.channel.ID, attempt.usedKey.ID, attempt.internalRequest.Model))
 					continue
 				}
 
@@ -232,6 +244,13 @@ func (r *relayRun) run() {
 	if lastErr == nil {
 		lastErr = errors.New("all channels failed")
 	}
+	if statusCode, retryAfter, unavailable := r.unavailable.response(); unavailable && !hadHardError {
+		setRetryAfter(r.c, retryAfter)
+		lastErr = unavailableError(statusCode, retryAfter)
+		r.metrics.Save(ctx, false, lastErr, r.iter.Attempts())
+		resp.Error(r.c, statusCode, lastErr.Error())
+		return
+	}
 	r.metrics.Save(ctx, false, lastErr, r.iter.Attempts())
 	resp.Error(r.c, http.StatusBadGateway, lastErr.Error())
 }
@@ -263,6 +282,7 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 	// === 检查结束 ===
 	orderedKeys := channel.GetChannelKeys(item.ModelName)
 	if len(orderedKeys) == 0 {
+		r.recordUnavailableKeys(channel, item.ModelName)
 		r.iter.Skip(channel.ID, 0, channel.Name, "no available key")
 		return nil, nil
 	}
@@ -301,6 +321,7 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 		}, nil
 	}
 
+	r.recordUnavailableKeys(channel, item.ModelName)
 	r.iter.Skip(channel.ID, 0, channel.Name, "all keys circuit-broken")
 	return nil, nil
 }
@@ -369,11 +390,10 @@ func (ra *relayAttempt) run() (bool, error) {
 		resp.Error(ra.c, statusCode, fwdErr.Error())
 		return true, fmt.Errorf("channel %s bad request (400): %v", ra.channel.Name, fwdErr)
 
-	case http.StatusUnauthorized, http.StatusForbidden: // 401/403 — try another key in the channel
+	case http.StatusUnauthorized, http.StatusForbidden: // 401/403 — disable failed key, try next key
 		latestKey := ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthFailure})
 		if latestKey.ID != 0 && !latestKey.Enabled {
-			log.Warnf("key %d disabled after %d consecutive auth errors (channel: %s)",
-				latestKey.ID, latestKey.ConsecutiveAuthErrors, ra.channel.Name)
+			log.Warnf("key %d disabled after authentication error (channel: %s)", latestKey.ID, ra.channel.Name)
 		}
 		span.End(dbmodel.AttemptFailed, ra.failureMessage(fwdErr))
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
@@ -484,6 +504,77 @@ func (ra *relayAttempt) failureMessage(err error) string {
 		msg = fmt.Sprintf("%s; temporary key cooldown=%s", msg, ra.keyCooldown)
 	}
 	return msg
+}
+
+func (r *relayRun) noteUnavailable(statusCode int, retryAfter time.Duration) {
+	if statusCode == http.StatusTooManyRequests {
+		r.unavailable.rateLimited = true
+	} else {
+		r.unavailable.other = true
+	}
+	if retryAfter > 0 && (r.unavailable.retryAfter == 0 || retryAfter < r.unavailable.retryAfter) {
+		r.unavailable.retryAfter = retryAfter
+	}
+}
+
+func (r *relayRun) recordUnavailableKeys(channel *dbmodel.Channel, modelName string) {
+	for _, key := range channel.Keys {
+		if !key.Enabled || key.ChannelKey == "" {
+			continue
+		}
+		if retryAfter := dbmodel.GetKeyModelCooldownRemaining(channel.ID, key.ID, modelName); retryAfter > 0 {
+			statusCode := http.StatusServiceUnavailable
+			if dbmodel.GetKeyModelCooldownStatus(channel.ID, key.ID, modelName).RateLimited {
+				statusCode = http.StatusTooManyRequests
+			}
+			r.noteUnavailable(statusCode, retryAfter)
+			continue
+		}
+		if tripped, retryAfter := balancer.IsTripped(channel.ID, key.ID, modelName); tripped {
+			r.noteUnavailable(http.StatusServiceUnavailable, retryAfter)
+		}
+	}
+}
+
+func (u unavailableKeys) response() (statusCode int, retryAfter time.Duration, unavailable bool) {
+	if !u.rateLimited && !u.other {
+		return 0, 0, false
+	}
+	if u.other {
+		return http.StatusServiceUnavailable, u.retryAfter, true
+	}
+	return http.StatusTooManyRequests, u.retryAfter, true
+}
+
+func setRetryAfter(c *gin.Context, retryAfter time.Duration) {
+	if retryAfter <= 0 {
+		return
+	}
+	seconds := int64(retryAfter / time.Second)
+	if retryAfter%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		seconds = 1
+	}
+	c.Header("Retry-After", fmt.Sprintf("%d", seconds))
+}
+
+func unavailableError(statusCode int, retryAfter time.Duration) error {
+	if retryAfter <= 0 {
+		return errors.New("all upstream keys are temporarily unavailable")
+	}
+	seconds := int64(retryAfter / time.Second)
+	if retryAfter%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		seconds = 1
+	}
+	if statusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("all upstream keys are rate limited; retry after %ds", seconds)
+	}
+	return fmt.Errorf("all upstream keys are temporarily unavailable; retry after %ds", seconds)
 }
 
 // lookupModelMaxContext 查询模型的 MaxContext，0 表示未知/不限制。
@@ -842,9 +933,10 @@ func streamEventTerminates(data []byte) bool {
 
 // writeStream writes pipeline output (client-format stream) back to the requester, preserving first-token timeout switch-channel behavior.
 func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.Stream[*httpclient.StreamEvent]) error {
-	if clientStream == nil {
+	if isNilStream(clientStream) {
 		return fmt.Errorf("empty pipeline stream")
 	}
+	clientStream = newGuardedStream(clientStream)
 
 	// set SSE response headers
 	ra.c.Header("Content-Type", "text/event-stream")
@@ -1034,6 +1126,10 @@ func (ra *relayAttempt) writeStream(ctx context.Context, clientStream streams.St
 					ra.keyCooldown = maxDuration(ra.configuredDuration(60), ra.keyCooldown)
 				}
 				log.Warnf("failed to read event: %v", r.err)
+				var panicErr *streamPanicError
+				if errors.As(r.err, &panicErr) {
+					log.Warnf("upstream stream %s panic stack:\n%s", panicErr.operation, panicErr.stack)
+				}
 				return fmt.Errorf("failed to read stream event: %w", r.err)
 			}
 			if r.event == nil || len(r.event.Data) == 0 {
@@ -1122,10 +1218,16 @@ func (m *relayPipelineMiddleware) OnOutboundRawRequest(ctx context.Context, requ
 	}
 	m.attempt.upstreamURL = request.URL
 	m.attempt.applyChannelRequestOptions(request)
+	if isOpenCodeEndpoint(request.URL) {
+		request.Headers.Set("x-opencode-session", openCodeSessions.sessionID(m.attempt.usedKey, time.Now()))
+		request.Headers.Del("x-opencode-client")
+		request.Headers.Set("User-Agent", "omp/18.1.14")
+		return request, nil
+	}
 	// Set default User-Agent if none of the transformers or custom headers set one.
 	// This overrides httpclient's own "axonhub/1.0" default.
 	if request.Headers.Get("User-Agent") == "" {
-		request.Headers.Set("User-Agent", "curl/8.5.0")
+		request.Headers.Set("User-Agent", "codex_cli_rs/0.153.4 (Linux 6.18.0; x86_64) xterm-256color")
 	}
 	return request, nil
 }

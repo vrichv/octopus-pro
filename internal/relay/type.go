@@ -21,6 +21,16 @@ type relayRun struct {
 	group            dbmodel.Group
 	piiFilterEnabled bool
 	failedKeys       map[string]struct{}
+	unavailable      unavailableKeys
+}
+
+// unavailableKeys tracks an exhausted model's earliest recovery window.
+// Rate-limited-only exhaustion maps to 429; any transport/circuit cooldown maps
+// to 503 because clients must not treat that as a quota response.
+type unavailableKeys struct {
+	retryAfter  time.Duration
+	rateLimited bool
+	other       bool
 }
 
 // relayAttempt 保存一次上游通道尝试的状态。

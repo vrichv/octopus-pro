@@ -111,6 +111,7 @@ type relayObservation struct {
 	Model        string
 	Stream       bool
 	Status       int
+	Headers      http.Header
 	Body         string
 	Calls        []upstreamRequest
 	RelayLog     dbmodel.RelayLog
@@ -679,6 +680,7 @@ func (h *resilienceHarness) doChat(modelName string, stream bool) relayObservati
 		Model:   modelName,
 		Stream:  stream,
 		Status:  recorder.Code,
+		Headers: recorder.Header().Clone(),
 		Body:    recorder.Body.String(),
 		Calls:   h.traceCalls(traceID),
 	}
@@ -775,6 +777,13 @@ func TestResilienceSuite(t *testing.T) {
 				assertObservation(t, observation, len(observation.Calls) == 1, "400 calls=%d", len(observation.Calls))
 				return
 			}
+			if testCase.status == http.StatusUnauthorized || testCase.status == http.StatusForbidden {
+				h.setFault(1, 1, h.models[0], faultStep{Kind: faultJSONSuccess})
+				observation := h.doChat(h.models[0], false)
+				assertObservation(t, observation, observation.Status == http.StatusOK, "%d status=%d", testCase.status, observation.Status)
+				assertObservation(t, observation, len(observation.Calls) == 2 && observation.Calls[0].Key != observation.Calls[1].Key, "%d calls=%v", testCase.status, observation.Calls)
+				return
+			}
 			if testCase.status == 404 {
 				observation := h.doChat(h.models[0], false)
 				assertObservation(t, observation, observation.Status == 200, "404 failover status=%d", observation.Status)
@@ -794,6 +803,16 @@ func TestResilienceSuite(t *testing.T) {
 		})
 	}
 
+	t.Run("StreamingHTTP401RetriesNextKey", func(t *testing.T) {
+		h := newResilienceHarness(t, "streaming-http-401", harnessOptions{})
+		h.setFault(1, 0, h.models[0], faultStep{Kind: faultHTTPStatus, Status: http.StatusUnauthorized})
+
+		observation := h.doChat(h.models[0], true)
+		assertObservation(t, observation, observation.Status == http.StatusOK, "streaming 401 status=%d", observation.Status)
+		assertObservation(t, observation, len(observation.Calls) == 2 && observation.Calls[0].Key != observation.Calls[1].Key, "streaming 401 calls=%v", observation.Calls)
+		assertObservation(t, observation, strings.Contains(observation.Body, "[DONE]"), "streaming 401 body=%q", observation.Body)
+	})
+
 	t.Run("AllKeys429FastFailure", func(t *testing.T) {
 		zero := 0
 		h := newResilienceHarness(t, "all-429", harnessOptions{RateLimitRetryWaitMax: &zero})
@@ -807,8 +826,51 @@ func TestResilienceSuite(t *testing.T) {
 		if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 			t.Fatalf("all-429 disabled wait elapsed=%v", elapsed)
 		}
-		assertObservation(t, observation, observation.Status == http.StatusBadGateway, "all-429 status=%d", observation.Status)
+		assertObservation(t, observation, observation.Status == http.StatusTooManyRequests, "all-429 status=%d", observation.Status)
 		assertObservation(t, observation, len(observation.Calls) == 20, "all-429 upstream calls=%d", len(observation.Calls))
+	})
+
+	t.Run("SingleKeyCooldownInformsClient", func(t *testing.T) {
+		zero := 0
+		h := newResilienceHarness(t, "single-key-cooldown", harnessOptions{RateLimitRetryWaitMax: &zero})
+		onlyKey := h.channels[0].keys[0]
+		if err := db.GetDB().Model(&dbmodel.ChannelKey{}).Where("id <> ?", onlyKey.ID).Update("enabled", false).Error; err != nil {
+			t.Fatalf("disable fallback keys: %v", err)
+		}
+		if err := op.InitCache(); err != nil {
+			t.Fatalf("reload channel cache: %v", err)
+		}
+		h.setFault(1, 0, h.models[0], faultStep{Kind: faultHTTPStatus, Status: http.StatusTooManyRequests, RetryAfter: "4"})
+
+		first := h.doChat(h.models[0], false)
+		assertObservation(t, first, first.Status == http.StatusTooManyRequests, "first 429 status=%d", first.Status)
+		assertObservation(t, first, first.Headers.Get("Retry-After") == "4", "first retry-after=%q", first.Headers.Get("Retry-After"))
+		assertObservation(t, first, len(first.Calls) == 1, "first upstream calls=%d", len(first.Calls))
+
+		blocked := h.doChat(h.models[0], false)
+		assertObservation(t, blocked, blocked.Status == http.StatusTooManyRequests, "cooldown status=%d", blocked.Status)
+		assertObservation(t, blocked, blocked.Headers.Get("Retry-After") != "", "cooldown retry-after=%q", blocked.Headers.Get("Retry-After"))
+		assertObservation(t, blocked, len(blocked.Calls) == 0, "cooldown unexpectedly reached upstream: calls=%v", blocked.Calls)
+	})
+
+	t.Run("SingleKeyStreamCooldownUsesServiceRetry", func(t *testing.T) {
+		h := newResilienceHarness(t, "single-key-stream-cooldown", harnessOptions{})
+		onlyKey := h.channels[0].keys[0]
+		if err := db.GetDB().Model(&dbmodel.ChannelKey{}).Where("id <> ?", onlyKey.ID).Update("enabled", false).Error; err != nil {
+			t.Fatalf("disable fallback keys: %v", err)
+		}
+		if err := op.InitCache(); err != nil {
+			t.Fatalf("reload channel cache: %v", err)
+		}
+		h.setFault(1, 0, h.models[0], faultStep{Kind: faultDisconnectAfter})
+
+		first := h.doChat(h.models[0], true)
+		assertObservation(t, first, len(first.Calls) == 1, "stream failure upstream calls=%d", len(first.Calls))
+
+		blocked := h.doChat(h.models[0], false)
+		assertObservation(t, blocked, blocked.Status == http.StatusServiceUnavailable, "stream cooldown status=%d", blocked.Status)
+		assertObservation(t, blocked, blocked.Headers.Get("Retry-After") != "", "stream cooldown retry-after=%q", blocked.Headers.Get("Retry-After"))
+		assertObservation(t, blocked, len(blocked.Calls) == 0, "stream cooldown unexpectedly reached upstream: calls=%v", blocked.Calls)
 	})
 
 	t.Run("CircuitOverrideTripsAfterTwoFailures", func(t *testing.T) {
@@ -837,22 +899,17 @@ func TestResilienceSuite(t *testing.T) {
 
 	t.Run("AuthFailureDisablesKey", func(t *testing.T) {
 		h := newResilienceHarness(t, "auth-disable", harnessOptions{})
-		h.setFault(1, 0, h.models[0],
-			faultStep{Kind: faultHTTPStatus, Status: 401},
-			faultStep{Kind: faultHTTPStatus, Status: 401},
-			faultStep{Kind: faultHTTPStatus, Status: 401},
-		)
-		for i := 0; i < 3; i++ {
-			h.setFault(1, 1, h.models[0], faultStep{Kind: faultJSONSuccess})
-			observation := h.doChat(h.models[0], false)
-			assertObservation(t, observation, observation.Status == 200, "auth request %d status=%d", i, observation.Status)
-		}
+		h.setFault(1, 0, h.models[0], faultStep{Kind: faultHTTPStatus, Status: http.StatusUnauthorized})
+
+		observation := h.doChat(h.models[0], false)
+		assertObservation(t, observation, observation.Status == http.StatusOK, "auth failure status=%d", observation.Status)
+		assertObservation(t, observation, len(observation.Calls) == 2 && observation.Calls[0].Key != observation.Calls[1].Key, "auth failure calls=%v", observation.Calls)
 		channel, err := op.ChannelGet(h.channels[0].channel.ID, context.Background())
 		if err != nil {
 			t.Fatalf("get auth channel: %v", err)
 		}
 		if channel.Keys[0].Enabled {
-			t.Fatalf("key-0 remained enabled after three auth failures: %+v", channel.Keys[0])
+			t.Fatalf("key-0 remained enabled after authentication failure: %+v", channel.Keys[0])
 		}
 	})
 
@@ -1160,7 +1217,7 @@ func TestResilienceSuite(t *testing.T) {
 		}
 		before := len(h.traceCalls(""))
 		blocked := h.doChat(h.models[0], false)
-		assertObservation(t, blocked, blocked.Status == http.StatusBadGateway, "disabled wait status=%d", blocked.Status)
+		assertObservation(t, blocked, blocked.Status == http.StatusTooManyRequests, "disabled wait status=%d", blocked.Status)
 		if len(h.traceCalls("")) != before {
 			t.Fatalf("disabled wait unexpectedly reached upstream: before=%d after=%d", before, len(h.traceCalls("")))
 		}

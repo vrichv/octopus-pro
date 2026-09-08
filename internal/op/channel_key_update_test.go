@@ -127,6 +127,7 @@ func TestChannelKeyApplyRuntimeUpdateConcurrentCostAccumulation(t *testing.T) {
 
 func TestChannelKeyApplyRuntimeUpdateConcurrentAuthFailures(t *testing.T) {
 	resetChannelKeyTestState(t)
+	initTestDB(t)
 	const channelID = 2
 	const keyID = 20
 	seedChannelKey(model.ChannelKey{ID: keyID, ChannelID: channelID, Enabled: true})
@@ -163,8 +164,8 @@ func TestChannelKeyApplyRuntimeUpdateConcurrentAuthFailures(t *testing.T) {
 	if key.LastAuthErrorTime != eventTime {
 		t.Fatalf("LastAuthErrorTime = %d, want %d", key.LastAuthErrorTime, eventTime)
 	}
-	if !key.Enabled {
-		t.Fatalf("Enabled = false, want true below auth failure threshold")
+	if key.Enabled {
+		t.Fatal("Enabled = true, want false after authentication failure")
 	}
 }
 
@@ -207,8 +208,8 @@ func TestChannelKeyApplyRuntimeUpdateAuthWindowExpiration(t *testing.T) {
 	if key.LastAuthErrorTime != eventTime {
 		t.Fatalf("LastAuthErrorTime = %d, want %d", key.LastAuthErrorTime, eventTime)
 	}
-	if !key.Enabled {
-		t.Fatalf("Enabled = false, want restored true after expired window below threshold")
+	if key.Enabled {
+		t.Fatal("Enabled = true, want false after authentication failure")
 	}
 	assertKeyCachesEqual(t, channelID, keyID)
 }

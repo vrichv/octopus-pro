@@ -227,6 +227,7 @@ type keyModelCooldownEntry struct {
 	cooldownUntil   time.Time // zero = 当前未冷却（但历史计数可能仍保留）
 	lastPenaltyAt   time.Time // 最近一次 429 / 临时冷却的写入时间，用于计数器衰减清理
 	consecutive429s int       // 连续 429 次数，成功时重置
+	rateLimited     bool      // 当前冷却由上游或本地限流触发
 	mu              sync.Mutex
 }
 
@@ -292,8 +293,10 @@ func RecordKeyModelCooldown(channelID, keyID int, modelName string, retryAfter t
 
 	if !entry.lastPenaltyAt.IsZero() && now.After(entry.lastPenaltyAt.Add(keyModelCooldownRetention)) {
 		entry.consecutive429s = 0
+		entry.rateLimited = false
 	}
 	entry.consecutive429s++
+	entry.rateLimited = true
 	entry.lastPenaltyAt = now
 
 	base := retryAfter
@@ -315,9 +318,19 @@ func RecordKeyModelCooldown(channelID, keyID int, modelName string, retryAfter t
 	entry.cooldownUntil = now.Add(cooldown)
 }
 
-// RecordKeyModelTemporaryCooldown applies a one-off cooldown without increasing
-// the consecutive429s penalty counter. Used for slow or truncated streams.
+// RecordKeyModelTemporaryCooldown applies a one-off non-rate-limit cooldown.
+// It is used for slow or truncated streams and does not increase the 429 penalty.
 func RecordKeyModelTemporaryCooldown(channelID, keyID int, modelName string, cooldown time.Duration) {
+	recordKeyModelTemporaryCooldown(channelID, keyID, modelName, cooldown, false)
+}
+
+// RecordKeyModelRateLimitCooldown applies a local rate-limit cooldown without
+// increasing the upstream 429 backoff counter.
+func RecordKeyModelRateLimitCooldown(channelID, keyID int, modelName string, cooldown time.Duration) {
+	recordKeyModelTemporaryCooldown(channelID, keyID, modelName, cooldown, true)
+}
+
+func recordKeyModelTemporaryCooldown(channelID, keyID int, modelName string, cooldown time.Duration, rateLimited bool) {
 	if cooldown <= 0 {
 		return
 	}
@@ -330,6 +343,7 @@ func RecordKeyModelTemporaryCooldown(channelID, keyID int, modelName string, coo
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	entry.lastPenaltyAt = now
+	entry.rateLimited = rateLimited
 	if until.After(entry.cooldownUntil) {
 		entry.cooldownUntil = until
 	}
@@ -342,26 +356,32 @@ func ClearKeyModelCooldown(channelID, keyID int, modelName string) {
 	globalKeyModelCooldown.Delete(key)
 }
 
-// isKeyModelCooling 检查指定 (key, model) 是否处于冷却中。
-// 冷却过期后仅清空当前冷却窗口；历史计数器保留至后台清理或成功请求。
-func isKeyModelCooling(channelID, keyID int, modelName string) bool {
+// GetKeyModelCooldownRemaining returns the remaining cooldown for a key-model
+// pair. Expired entries retain their 429 history but no longer block routing.
+func GetKeyModelCooldownRemaining(channelID, keyID int, modelName string) time.Duration {
 	key := modelCooldownKey(channelID, keyID, modelName)
 	v, ok := globalKeyModelCooldown.Load(key)
 	if !ok {
-		return false
+		return 0
 	}
 	entry := v.(*keyModelCooldownEntry)
 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	if entry.cooldownUntil.IsZero() {
-		return false
+		return 0
 	}
-	if time.Now().After(entry.cooldownUntil) {
+	remaining := time.Until(entry.cooldownUntil)
+	if remaining <= 0 {
 		entry.cooldownUntil = time.Time{}
-		return false
+		return 0
 	}
-	return true
+	return remaining
+}
+
+// isKeyModelCooling checks whether the specified (key, model) pair is cooling.
+func isKeyModelCooling(channelID, keyID int, modelName string) bool {
+	return GetKeyModelCooldownRemaining(channelID, keyID, modelName) > 0
 }
 
 // CooldownStatus 用于 API 查询的冷却状态快照。
@@ -369,6 +389,7 @@ type CooldownStatus struct {
 	Active          bool   `json:"active"`
 	Consecutive429s int    `json:"consecutive_429s"`
 	CooldownUntil   string `json:"cooldown_until"`
+	RateLimited     bool   `json:"-"`
 }
 
 // GetKeyModelCooldownStatus 返回指定 (key, model) 的冷却当前状态。
@@ -385,6 +406,7 @@ func GetKeyModelCooldownStatus(channelID, keyID int, modelName string) CooldownS
 
 	status := CooldownStatus{
 		Consecutive429s: entry.consecutive429s,
+		RateLimited:     entry.rateLimited,
 	}
 	if !entry.cooldownUntil.IsZero() && time.Now().Before(entry.cooldownUntil) {
 		status.Active = true

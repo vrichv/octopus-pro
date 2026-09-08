@@ -151,13 +151,10 @@ func ChannelKeyApplyRuntimeUpdate(update ChannelKeyRuntimeUpdate) (model.Channel
 		if current.LastAuthErrorTime > 0 && eventTime-current.LastAuthErrorTime >= 300 {
 			nextKey.ConsecutiveAuthErrors = 0
 			nextKey.LastAuthErrorTime = 0
-			nextKey.Enabled = true
 		}
 		nextKey.ConsecutiveAuthErrors++
 		nextKey.LastAuthErrorTime = eventTime
-		if nextKey.ConsecutiveAuthErrors >= 3 {
-			nextKey.Enabled = false
-		}
+		nextKey.Enabled = false
 	default:
 		return model.ChannelKey{}, fmt.Errorf("invalid channel key auth result")
 	}
