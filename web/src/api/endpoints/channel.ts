@@ -17,6 +17,9 @@ export enum ChannelType {
     OpenRouter = 'openrouter/chat_completions',
     Bailian = 'bailian/chat_completions',
     XAI = 'xai',
+    ModelScope = 'modelscope/chat_completions',
+    Moonshot = 'moonshot/chat_completions',
+    ZAI = 'zai/chat_completions',
     OpenCodeZen = 'opencode',
     OpenCodeGo = 'opencode/go',
 }

@@ -16,7 +16,7 @@ English | [简体中文](README_zh.md)
 :- 🚀 **Key-level Proxy** - Set a separate proxy address for each API key
 :- 🎯 **Key-level Scheduling** - Per-key cost priority, round robin, rate limiting, and 429 cooldown scheduling
 :- 🚦 **Rate Limiting** - Per-key and per-channel rate limiting configuration
-:- 🧩 **Channel Enhancement** - Support for DeepSeek, OpenRouter, Alibaba Bailian and other channel types
+:- 🧩 **Channel Enhancement** - Support for DeepSeek, OpenRouter, Alibaba Bailian, ModelScope, Moonshot, Z.ai and other channel types
 :- 🧰 **Parameter Override** - Support channel `param_override` with per-model override rules
 :- 🛡️ **Privacy Filtering** - Optional request privacy filtering to mask common PII and sensitive keys
 :- ⏱️ **Streaming Timeout Control** - Supports upstream timeout, first-token timeout, streaming idle timeout, and streaming hard timeout. Compatible with special scenarios from free providers like Nvidia NIM and Modelscope
@@ -30,7 +30,7 @@ English | [简体中文](README_zh.md)
 - 🔑 **Multi-Key Support** - Support multiple API keys for a single channel
 - ⚡ **Smart Selection** - Multiple endpoints per channel, smart selection of the endpoint with the shortest delay
 - ⚖️ **Load Balancing** - Automatic request distribution for stable and efficient service
-- 🔄 **Protocol Conversion** - Seamless conversion between OpenAI Chat / OpenAI Responses / Anthropic API formats
+- 🔄 **Protocol Conversion** - Seamless conversion between OpenAI Chat / Completions / Responses / Responses Compact / Anthropic API formats
 - 💰 **Price Sync** - Automatic model pricing updates
 - 🔃 **Model Sync** - Automatic synchronization of available model lists with channels
 - 📊 **Analytics** - Comprehensive request statistics, token consumption, and cost tracking
@@ -261,6 +261,10 @@ The program automatically appends API paths based on channel type. You only need
 | Gemini | `/models/:model:generateContent` | `https://generativelanguage.googleapis.com/v1beta` | `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent` |
 | OpenCode Zen | Model-dependent: `/chat/completions`, `/responses`, `/messages` | `https://opencode.ai/zen/v1` | `https://opencode.ai/zen/v1/responses` |
 | OpenCode Go | Model-dependent: `/chat/completions`, `/responses`, `/messages` | `https://opencode.ai/zen/go/v1` | `https://opencode.ai/zen/go/v1/chat/completions` |
+| OpenRouter | `/chat/completions`, `/images` | `https://openrouter.ai/api/v1` | `https://openrouter.ai/api/v1/chat/completions` |
+| ModelScope | `/chat/completions` | `https://api-inference.modelscope.cn/v1` | `https://api-inference.modelscope.cn/v1/chat/completions` |
+| Moonshot | `/chat/completions` | `https://api.moonshot.cn/v1` | `https://api.moonshot.cn/v1/chat/completions` |
+| Z.ai | `/chat/completions`, `/images/generations` | `https://api.z.ai/api/paas/v4` | `https://api.z.ai/api/paas/v4/chat/completions` |
 
 > 💡 **Tip**: No need to include specific API endpoint paths in the Base URL - the program handles this automatically.
 

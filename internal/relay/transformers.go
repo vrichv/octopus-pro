@@ -12,11 +12,14 @@ import (
 	"github.com/looplj/axonhub/llm/transformer/deepseek"
 	"github.com/looplj/axonhub/llm/transformer/doubao"
 	"github.com/looplj/axonhub/llm/transformer/gemini"
+	"github.com/looplj/axonhub/llm/transformer/modelscope"
+	"github.com/looplj/axonhub/llm/transformer/moonshot"
 	"github.com/looplj/axonhub/llm/transformer/openai"
 	"github.com/looplj/axonhub/llm/transformer/openai/responses"
 	"github.com/looplj/axonhub/llm/transformer/opencode"
 	"github.com/looplj/axonhub/llm/transformer/openrouter"
 	"github.com/looplj/axonhub/llm/transformer/xai"
+	"github.com/looplj/axonhub/llm/transformer/zai"
 	dbmodel "github.com/vrichv/octopus-pro/internal/model"
 )
 
@@ -24,8 +27,12 @@ func newInbound(format llm.APIFormat) transformer.Inbound {
 	switch format {
 	case llm.APIFormatOpenAIChatCompletion:
 		return openai.NewInboundTransformer()
+	case llm.APIFormatOpenAICompletion:
+		return openai.NewCompletionInboundTransformer()
 	case llm.APIFormatOpenAIResponse:
 		return responses.NewInboundTransformer()
+	case llm.APIFormatOpenAIResponseCompact:
+		return responses.NewCompactInboundTransformer()
 	case llm.APIFormatOpenAIEmbedding:
 		return openai.NewEmbeddingInboundTransformer()
 	case llm.APIFormatOpenAIImageGeneration:
@@ -74,13 +81,35 @@ func newOutbound(channelType llm.APIFormat, request *llm.Request, baseURL, key s
 			llm.APIFormatOpenAIImageEdit,
 			llm.APIFormatOpenAIImageVariation,
 			dbmodel.ChannelTypeDeepSeek,
-			dbmodel.ChannelTypeOpenRouter,
 			dbmodel.ChannelTypeBailian:
 			return openai.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeOpenRouter:
+			return openrouter.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeZAI:
+			return zai.NewOutboundTransformer(baseURL, key)
 		case llm.APIFormatGeminiContents:
 			return gemini.NewOutboundTransformer(baseURL, key)
 		case dbmodel.ChannelTypeDoubao:
 			return doubao.NewOutboundTransformer(baseURL, key)
+		default:
+			return nil, fmt.Errorf("channel type %s is not compatible with %s request", channelType, requestType)
+		}
+	case llm.RequestTypeCompletion:
+		switch channelType {
+		case llm.APIFormatOpenAIChatCompletion:
+			return openai.NewCompletionOutboundTransformer(&openai.Config{
+				BaseURL:        baseURL,
+				APIKeyProvider: auth.NewStaticKeyProvider(key),
+			})
+		case dbmodel.ChannelTypeDeepSeek:
+			return deepseek.NewOutboundTransformer(baseURL, key)
+		default:
+			return nil, fmt.Errorf("channel type %s is not compatible with %s request", channelType, requestType)
+		}
+	case llm.RequestTypeCompact:
+		switch channelType {
+		case llm.APIFormatOpenAIResponse:
+			return responses.NewOutboundTransformer(baseURL, key)
 		default:
 			return nil, fmt.Errorf("channel type %s is not compatible with %s request", channelType, requestType)
 		}
@@ -104,6 +133,12 @@ func newOutbound(channelType llm.APIFormat, request *llm.Request, baseURL, key s
 			return bailian.NewOutboundTransformer(baseURL, key)
 		case dbmodel.ChannelTypeXAI:
 			return xai.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeModelScope:
+			return modelscope.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeMoonshot:
+			return moonshot.NewOutboundTransformer(baseURL, key)
+		case dbmodel.ChannelTypeZAI:
+			return zai.NewOutboundTransformer(baseURL, key)
 		case dbmodel.ChannelTypeOpenCodeZen:
 			return newOpenCodeZenOutbound(request, baseURL, key)
 		case dbmodel.ChannelTypeOpenCodeGo:

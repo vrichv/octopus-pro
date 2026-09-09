@@ -17,7 +17,7 @@
 -  🚀 **Key级代理** - 支持单独设置每个 Key 的代理地址
 -  🎯 **Key级调度** - 支持 Key 级成本优先、轮询、限流与 429 冷却调度
 -  🚦 **限流增强** - 支持 Key 级、渠道级限流
--  🧩 **渠道增强** - 支持 DeepSeek、OpenRouter、阿里百炼等渠道类型
+-  🧩 **渠道增强** - 支持 DeepSeek、OpenRouter、阿里百炼、ModelScope、Moonshot、Z.ai 等渠道类型
 -  🧰 **参数覆盖** - 支持渠道 `param_override`，并可按模型分别配置覆盖规则
 -  🛡️ **隐私过滤** - 可选启用请求隐私过滤，对常见 PII 与密钥类内容进行脱敏
 -  ⏱️ **流式超时控制** - 支持上游超时、首字超时、流空闲超时、流硬超时，适配 Nvidia NIM，Modelscope 等免费供应商的特殊场景
@@ -31,7 +31,7 @@
 - 🔑 **多Key支持** - 单渠道支持配置多 Key
 - ⚡ **智能优选** - 单渠道多端点，智能选择延迟最小的端点请求
 - ⚖️ **负载均衡** - 自动分配请求，确保服务稳定高效
-- 🔄 **协议互转** - 支持 OpenAI Chat / OpenAI Responses / Anthropic 三种 API 格式互相转换
+- 🔄 **协议互转** - 支持 OpenAI Chat / Completions / Responses / Responses Compact / Anthropic 格式互相转换
 - 💰 **价格同步** - 自动更新模型价格
 - 🔃 **模型同步** - 自动与渠道同步可用模型列表，省心省力
 - 📊 **数据统计** - 全面的请求统计、Token 消耗、费用追踪
@@ -262,6 +262,10 @@ http://localhost:3000
 | Gemini | `/models/:model:generateContent` | `https://generativelanguage.googleapis.com/v1beta` | `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent` |
 | OpenCode Zen | 按模型选择 `/chat/completions`、`/responses`、`/messages` | `https://opencode.ai/zen/v1` | `https://opencode.ai/zen/v1/responses` |
 | OpenCode Go | 按模型选择 `/chat/completions`、`/responses`、`/messages` | `https://opencode.ai/zen/go/v1` | `https://opencode.ai/zen/go/v1/chat/completions` |
+| OpenRouter | `/chat/completions`、`/images` | `https://openrouter.ai/api/v1` | `https://openrouter.ai/api/v1/chat/completions` |
+| ModelScope | `/chat/completions` | `https://api-inference.modelscope.cn/v1` | `https://api-inference.modelscope.cn/v1/chat/completions` |
+| Moonshot | `/chat/completions` | `https://api.moonshot.cn/v1` | `https://api.moonshot.cn/v1/chat/completions` |
+| Z.ai | `/chat/completions`、`/images/generations` | `https://api.z.ai/api/paas/v4` | `https://api.z.ai/api/paas/v4/chat/completions` |
 
 > 💡 **提示**：填写 Base URL 时无需包含具体的 API 端点路径，程序会自动处理。
 

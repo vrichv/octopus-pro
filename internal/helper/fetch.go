@@ -60,6 +60,9 @@ func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.C
 	if request.Type == model.ChannelTypeDoubao {
 		baseURL = transformer.NormalizeBaseURL(request.GetBaseUrl(), "v3")
 	}
+	if request.Type == model.ChannelTypeZAI {
+		baseURL = transformer.NormalizeBaseURL(request.GetBaseUrl(), "v4")
+	}
 	req, _ := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,

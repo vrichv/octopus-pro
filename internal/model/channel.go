@@ -26,6 +26,9 @@ const ChannelTypeDeepSeek llm.APIFormat = "deepseek/chat_completions"
 const ChannelTypeOpenRouter llm.APIFormat = "openrouter/chat_completions"
 const ChannelTypeBailian llm.APIFormat = "bailian/chat_completions"
 const ChannelTypeXAI llm.APIFormat = "xai"
+const ChannelTypeModelScope llm.APIFormat = "modelscope/chat_completions"
+const ChannelTypeMoonshot llm.APIFormat = "moonshot/chat_completions"
+const ChannelTypeZAI llm.APIFormat = "zai/chat_completions"
 const (
 	// ChannelTypeOpenCodeZen retains the legacy "opencode" value for existing Zen channels.
 	ChannelTypeOpenCodeZen llm.APIFormat = "opencode"
