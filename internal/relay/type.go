@@ -36,6 +36,7 @@ type unavailableKeys struct {
 // relayAttempt 保存一次上游通道尝试的状态。
 type relayAttempt struct {
 	*relayRun
+	request         *llm.Request
 	outAdapter      transformer.Outbound
 	channel         *dbmodel.Channel
 	usedKey         dbmodel.ChannelKey
@@ -48,6 +49,13 @@ type relayAttempt struct {
 	canceled        bool          // true when the client canceled this attempt
 	upstreamURL     string        // 上游完整请求 URL(request.URL)，用于失败日志
 	tryNextKey      bool          // true: 试同一渠道下一个 key; false: 切下一渠道
+}
+
+func (ra *relayAttempt) requestForAttempt() *llm.Request {
+	if ra.request != nil {
+		return ra.request
+	}
+	return ra.internalRequest
 }
 
 func relayKey(channelID, keyID int) string {

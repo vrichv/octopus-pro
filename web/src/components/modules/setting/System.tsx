@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
+import { ProxySelect } from '@/components/modules/proxy/ProxySelect';
 import { toast } from '@/components/common/Toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 
@@ -15,26 +16,27 @@ export function SettingSystem() {
     const { data: settings } = useSettingList();
     const setSetting = useSetSetting();
 
-    const [proxyUrl, setProxyUrl] = useState('');
+    const [proxyID, setProxyID] = useState(0);
     const [statsSaveInterval, setStatsSaveInterval] = useState('');
     const [corsAllowOrigins, setCorsAllowOrigins] = useState('');
 
     const [experimentalEnabled, setExperimentalEnabled] = useState(false);
     const [corsInputValue, setCorsInputValue] = useState('');
 
-    const initialProxyUrl = useRef('');
+    const initialProxyID = useRef(0);
     const initialStatsSaveInterval = useRef('');
     const initialCorsAllowOrigins = useRef('');
     const initialExperimentalEnabled = useRef(false);
 
     useEffect(() => {
         if (settings) {
-            const proxy = settings.find(s => s.key === SettingKey.ProxyURL);
+            const proxy = settings.find(s => s.key === SettingKey.ProxyID);
             const interval = settings.find(s => s.key === SettingKey.StatsSaveInterval);
             const cors = settings.find(s => s.key === SettingKey.CORSAllowOrigins);
             if (proxy) {
-                queueMicrotask(() => setProxyUrl(proxy.value));
-                initialProxyUrl.current = proxy.value;
+                const parsedProxyID = Number(proxy.value) || 0;
+                queueMicrotask(() => setProxyID(parsedProxyID));
+                initialProxyID.current = parsedProxyID;
             }
             if (interval) {
                 queueMicrotask(() => setStatsSaveInterval(interval.value));
@@ -59,15 +61,26 @@ export function SettingSystem() {
         setSetting.mutate({ key, value }, {
             onSuccess: () => {
                 toast.success(t('saved'));
-                if (key === SettingKey.ProxyURL) {
-                    initialProxyUrl.current = value;
-                } else if (key === SettingKey.StatsSaveInterval) {
+                if (key === SettingKey.StatsSaveInterval) {
                     initialStatsSaveInterval.current = value;
                 } else if (key === SettingKey.CORSAllowOrigins) {
                     initialCorsAllowOrigins.current = value;
                 }
             }
         });
+    };
+
+    const handleProxyChange = (value: number) => {
+        setProxyID(value);
+        setSetting.mutate(
+            { key: SettingKey.ProxyID, value: String(value) },
+            {
+                onSuccess: () => {
+                    initialProxyID.current = value;
+                    toast.success(t('saved'));
+                }
+            }
+        );
     };
 
     const handleExperimentalChange = (checked: boolean) => {
@@ -145,18 +158,18 @@ export function SettingSystem() {
                 {t('system')}
             </h2>
 
-            {/* 代理地址 */}
+            {/* 系统代理 */}
             <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                     <Globe className="h-5 w-5 text-muted-foreground" />
-                    <span className="text-sm font-medium">{t('proxyUrl.label')}</span>
+                    <span className="text-sm font-medium">{t('proxy.label')}</span>
                 </div>
-                <Input
-                    value={proxyUrl}
-                    onChange={(e) => setProxyUrl(e.target.value)}
-                    onBlur={() => handleSave('proxy_url', proxyUrl, initialProxyUrl.current)}
-                    placeholder={t('proxyUrl.placeholder')}
-                    className="w-48 rounded-xl"
+                <ProxySelect
+                    id="system-proxy"
+                    value={proxyID}
+                    onChange={handleProxyChange}
+                    noneLabel={t('proxy.none')}
+                    className="w-48"
                 />
             </div>
 

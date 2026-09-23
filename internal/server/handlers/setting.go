@@ -58,6 +58,19 @@ func setSetting(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	if setting.Key == model.SettingKeyProxyID {
+		id, err := strconv.Atoi(setting.Value)
+		if err != nil {
+			resp.Error(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if id > 0 {
+			if _, err := op.ProxyGet(id); err != nil {
+				resp.Error(c, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
+	}
 	if err := op.SettingSetString(setting.Key, setting.Value); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -154,6 +167,7 @@ func decodeDBDump(body []byte, dump *model.DBDump) error {
 	}
 
 	if dump.Version == 0 &&
+		len(dump.Proxies) == 0 &&
 		len(dump.Channels) == 0 &&
 		len(dump.Groups) == 0 &&
 		len(dump.GroupItems) == 0 &&

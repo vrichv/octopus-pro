@@ -99,11 +99,11 @@ func TestOpenCodeMiddlewareOverridesHeadersAndAxonHubPreservesThem(t *testing.T)
 	if sessionID := request.Headers.Get("x-opencode-session"); sessionID == "" || sessionID == "channel-session" || sessionID == "inbound-session" {
 		t.Fatalf("x-opencode-session = %q, want generated key session", sessionID)
 	}
-	if got := request.Headers.Get("x-opencode-client"); got != "" {
-		t.Fatalf("x-opencode-client = %q, want removed", got)
+	if got := request.Headers.Get("x-opencode-client"); got != "cli" {
+		t.Fatalf("x-opencode-client = %q, want cli", got)
 	}
-	if got := request.Headers.Get("User-Agent"); got != "omp/18.1.14" {
-		t.Fatalf("User-Agent = %q, want omp/18.1.14", got)
+	if got := request.Headers.Get("User-Agent"); got != "opencode/1.18.32 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14" {
+		t.Fatalf("User-Agent = %q, want opencode/1.18.32", got)
 	}
 
 	finalRequest, err := httpclient.BuildHttpRequest(context.Background(), request)
@@ -112,14 +112,14 @@ func TestOpenCodeMiddlewareOverridesHeadersAndAxonHubPreservesThem(t *testing.T)
 	}
 	for name, want := range map[string]string{
 		"x-opencode-session": request.Headers.Get("x-opencode-session"),
-		"User-Agent":         "omp/18.1.14",
+		"User-Agent":         "opencode/1.18.32 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14",
 	} {
 		if got := finalRequest.Header.Get(name); got != want {
 			t.Fatalf("AxonHub final %s = %q, want %q", name, got, want)
 		}
 	}
-	if got := finalRequest.Header.Get("x-opencode-client"); got != "" {
-		t.Fatalf("AxonHub final x-opencode-client = %q, want removed", got)
+	if got := finalRequest.Header.Get("x-opencode-client"); got != "cli" {
+		t.Fatalf("AxonHub final x-opencode-client = %q, want cli", got)
 	}
 }
 

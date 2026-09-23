@@ -22,10 +22,17 @@ var (
 
 // GetHTTPClientSystemProxy returns a cached http.Client.
 // - useProxy=false: bypass proxy
-// - useProxy=true: use proxy settings from system/app settings (setting key: proxy_url)
+// - useProxy=true: use proxy settings from system/app settings (setting key: proxy_id)
 func GetHTTPClientSystemProxy(useProxy bool) (*http.Client, error) {
 	if useProxy {
-		currentProxyURL, err := op.SettingGetString(model.SettingKeyProxyURL)
+		proxyID, err := op.SettingGetInt(model.SettingKeyProxyID)
+		if err != nil {
+			return nil, err
+		}
+		if proxyID == 0 {
+			return nil, fmt.Errorf("system proxy is not configured")
+		}
+		currentProxyURL, err := op.ProxyGetURL(proxyID)
 		if err != nil {
 			return nil, err
 		}

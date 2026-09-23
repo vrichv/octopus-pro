@@ -165,7 +165,23 @@ func TestGetChannelKeys_CostModeReturnsFallbackOrder(t *testing.T) {
 	}
 	for _, id := range []int{1, 2, 3} {
 		if !seen[id] {
-			t.Fatalf("missing key %d in ordered result", id)
+			t.Fatalf("missing key %d", id)
 		}
+	}
+}
+
+func TestOpenCodeZenEmptyKeyParticipatesInModelCooldown(t *testing.T) {
+	channel := &Channel{
+		ID:   91,
+		Type: ChannelTypeOpenCodeZen,
+		Keys: []ChannelKey{{ID: 92, ChannelID: 91, Enabled: true, ChannelKey: ""}},
+	}
+	if got := channel.GetChannelKey("mimo-v2.6-flash-free"); got.ID != 92 {
+		t.Fatalf("empty Zen key was not selectable: %+v", got)
+	}
+	RecordKeyModelTemporaryCooldown(channel.ID, 92, "mimo-v2.6-flash-free", time.Minute)
+	defer ClearKeyModelCooldown(channel.ID, 92, "mimo-v2.6-flash-free")
+	if got := channel.GetChannelKey("mimo-v2.6-flash-free"); got.ID != 0 {
+		t.Fatalf("empty Zen key ignored model cooldown: %+v", got)
 	}
 }

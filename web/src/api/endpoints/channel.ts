@@ -53,7 +53,7 @@ export type ChannelKey = {
     last_use_time_stamp: number;
     total_cost: number;
     remark: string;
-   key_proxy: string;
+   key_proxy_id: number;
 };
 
 /**
@@ -74,7 +74,7 @@ export type Channel = {
     auto_group: AutoGroupType;
     custom_header: CustomHeader[];
     param_override?: string | null;
-    channel_proxy?: string | null;
+    channel_proxy_id?: number | null;
     match_regex?: string | null;
    rate_limit: string;
    model_rate_limit: string;
@@ -100,7 +100,7 @@ export type CreateChannelRequest = {
     type: ChannelType;
     enabled?: boolean;
     base_urls: BaseUrl[];
-    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark' | 'key_proxy'>>;
+    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark' | 'key_proxy_id'>>;
     model: string;
     custom_model?: string;
     excluded_model?: string;
@@ -108,7 +108,7 @@ export type CreateChannelRequest = {
     auto_sync?: boolean;
     auto_group?: AutoGroupType;
     custom_header?: CustomHeader[];
-    channel_proxy?: string | null;
+    channel_proxy_id?: number | null;
     param_override?: string | null;
     match_regex?: string | null;
     rate_limit?: string;
@@ -135,7 +135,7 @@ export type UpdateChannelRequest = {
     auto_sync?: boolean;
     auto_group?: AutoGroupType;
     custom_header?: CustomHeader[];
-    channel_proxy?: string | null;
+    channel_proxy_id?: number | null;
     param_override?: string | null;
     match_regex?: string | null;
     rate_limit?: string;
@@ -145,17 +145,22 @@ export type UpdateChannelRequest = {
     circuit_breaker_cooldown?: number | null;
     circuit_breaker_max_cooldown?: number | null;
     // keys diff
-    keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark' | 'key_proxy'>>;
-    keys_to_update?: Array<{ id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy?: string }>;
+    keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark' | 'key_proxy_id'>>;
+    keys_to_update?: Array<{ id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy_id?: number }>;
     keys_to_delete?: number[];
 };
+
+export function normalizeChannelKey(value: string): string {
+    const trimmed = value.trim();
+    return trimmed === 'NULL' ? '' : trimmed;
+}
 
 export type FetchModelRequest = {
     type: ChannelType;
     base_urls: BaseUrl[];
     keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key'>>;
     proxy?: boolean;
-    channel_proxy?: string | null;
+    channel_proxy_id?: number | null;
     match_regex?: string | null;
     custom_header?: CustomHeader[];
 };
@@ -221,7 +226,11 @@ export function useCreateChannel() {
 
     return useMutation({
         mutationFn: async (data: CreateChannelRequest) => {
-            return apiClient.post<ChannelServer>('/api/v1/channel/create', data);
+            const normalized: CreateChannelRequest = {
+                ...data,
+                keys: data.keys.map((key) => ({ ...key, channel_key: normalizeChannelKey(key.channel_key) })),
+            };
+            return apiClient.post<ChannelServer>('/api/v1/channel/create', normalized);
         },
         onSuccess: (data) => {
             logger.log('渠道创建成功:', data);
@@ -257,7 +266,15 @@ export function useUpdateChannel() {
 
     return useMutation({
         mutationFn: async (data: UpdateChannelRequest) => {
-            return apiClient.post<ChannelServer>('/api/v1/channel/update', data);
+            const normalized: UpdateChannelRequest = {
+                ...data,
+                keys_to_add: data.keys_to_add?.map((key) => ({ ...key, channel_key: normalizeChannelKey(key.channel_key) })),
+                keys_to_update: data.keys_to_update?.map((key) => ({
+                    ...key,
+                    ...(key.channel_key !== undefined ? { channel_key: normalizeChannelKey(key.channel_key) } : {}),
+                })),
+            };
+            return apiClient.post<ChannelServer>('/api/v1/channel/update', normalized);
         },
         onSuccess: (data) => {
             logger.log('渠道更新成功:', data);

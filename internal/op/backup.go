@@ -23,6 +23,9 @@ func DBExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DB
 		IncludeStats: includeStats,
 	}
 
+	if err := conn.Find(&d.Proxies).Error; err != nil {
+		return nil, fmt.Errorf("export proxies: %w", err)
+	}
 	if err := conn.Find(&d.Channels).Error; err != nil {
 		return nil, fmt.Errorf("export channels: %w", err)
 	}
@@ -89,6 +92,11 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 
 	err := conn.Transaction(func(tx *gorm.DB) error {
 		// base tables
+		if n, err := createDoNothing(tx, dump.Proxies); err != nil {
+			return fmt.Errorf("import proxies: %w", err)
+		} else {
+			res.RowsAffected["proxies"] = n
+		}
 		if n, err := createDoNothing(tx, dump.Channels); err != nil {
 			return fmt.Errorf("import channels: %w", err)
 		} else {

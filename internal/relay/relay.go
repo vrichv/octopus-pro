@@ -296,15 +296,30 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 			continue
 		}
 
-		outAdapter, err := newOutbound(channel.Type, r.internalRequest, channel.GetBaseUrl(), usedKey.ChannelKey)
+		candidateModel := item.ModelName
+		if channel.Type == dbmodel.ChannelTypeOpenCodeZen {
+			candidateModel = openCodeModelProviders.canonical(candidateModel)
+		}
+		candidateRequest := r.internalRequest
+		var attemptRequest *llm.Request
+		if (channel.Type == dbmodel.ChannelTypeOpenCodeZen || channel.Type == dbmodel.ChannelTypeOpenCodeGo) &&
+			!strings.EqualFold(candidateModel, r.internalRequest.Model) {
+			isolated := *r.internalRequest
+			isolated.Model = candidateModel
+			candidateRequest = &isolated
+			attemptRequest = candidateRequest
+		}
+		if channel.Type != dbmodel.ChannelTypeOpenCodeZen && channel.Type != dbmodel.ChannelTypeOpenCodeGo {
+			r.internalRequest.Model = candidateModel
+		}
+		r.metrics.ActualModel = candidateModel
+		// The group name is only a client-facing alias. Protocol selection and
+		// outbound transformation must use the candidate's official model ID.
+		outAdapter, err := newOutbound(channel.Type, candidateRequest, channel.GetBaseUrl(), usedKey.ChannelKey)
 		if err != nil {
 			r.iter.Skip(channel.ID, usedKey.ID, channel.Name, err.Error())
 			return nil, nil
 		}
-
-		// set client model to the current candidate's actual upstream model on each attempt; retry will overwrite with next candidate.
-		r.internalRequest.Model = item.ModelName
-		r.metrics.ActualModel = item.ModelName
 		r.metrics.ParamOverride = ""
 		if r.iter.Index() == 0 {
 			log.Debugf("forwarding to channel: model=%s mode=%d channel=%s upstream_model=%s key=%s (attempt %d/%d, sticky=%t)",
@@ -315,6 +330,7 @@ func (r *relayRun) prepareAttempt() (*relayAttempt, error) {
 
 		return &relayAttempt{
 			relayRun:   r,
+			request:    attemptRequest,
 			outAdapter: outAdapter,
 			channel:    channel,
 			usedKey:    usedKey,
@@ -359,13 +375,13 @@ func (ra *relayAttempt) run() (bool, error) {
 			AuthResult:       op.ChannelKeyAuthSuccess,
 		})
 
-		dbmodel.ClearKeyModelCooldown(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		dbmodel.ClearKeyModelCooldown(ra.channel.ID, ra.usedKey.ID, ra.requestForAttempt().Model)
 		span.End(dbmodel.AttemptSuccess, "")
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:       span.Duration().Milliseconds(),
 			RequestSuccess: 1,
 		})
-		balancer.RecordSuccess(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		balancer.RecordSuccess(ra.channel.ID, ra.usedKey.ID, ra.requestForAttempt().Model)
 		balancer.SetSticky(ra.metrics.APIKeyID, ra.metrics.RequestModel, ra.channel.ID, ra.usedKey.ID)
 		return false, nil
 	}
@@ -390,7 +406,7 @@ func (ra *relayAttempt) run() (bool, error) {
 		resp.Error(ra.c, statusCode, fwdErr.Error())
 		return true, fmt.Errorf("channel %s bad request (400): %v", ra.channel.Name, fwdErr)
 
-	case http.StatusUnauthorized, http.StatusForbidden: // 401/403 — disable failed key, try next key
+	case http.StatusUnauthorized, http.StatusForbidden: // 401/403 — disable the selected key, including empty Zen keys
 		latestKey := ra.applyKeyRuntimeUpdate(op.ChannelKeyRuntimeUpdate{StatusCode: statusCode, LastUseTimeStamp: nowSec, AuthResult: op.ChannelKeyAuthFailure})
 		if latestKey.ID != 0 && !latestKey.Enabled {
 			log.Warnf("key %d disabled after authentication error (channel: %s)", latestKey.ID, ra.channel.Name)
@@ -400,7 +416,7 @@ func (ra *relayAttempt) run() (bool, error) {
 			WaitTime:      span.Duration().Milliseconds(),
 			RequestFailed: 1,
 		})
-		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.requestForAttempt().Model)
 		if ra.failedKeys == nil {
 			ra.failedKeys = make(map[string]struct{})
 		}
@@ -415,7 +431,7 @@ func (ra *relayAttempt) run() (bool, error) {
 		}
 		ra.applyKeyRuntimeUpdate(update)
 		// per-key-per-model 冷却：仅冷却当前 (key, model) 组合，指数退避
-		dbmodel.RecordKeyModelCooldown(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.retryAfter)
+		dbmodel.RecordKeyModelCooldown(ra.channel.ID, ra.usedKey.ID, ra.requestForAttempt().Model, ra.retryAfter)
 		span.End(dbmodel.AttemptFailed, ra.failureMessage(fwdErr))
 		op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 			WaitTime:      span.Duration().Milliseconds(),
@@ -435,7 +451,7 @@ func (ra *relayAttempt) run() (bool, error) {
 			WaitTime:      span.Duration().Milliseconds(),
 			RequestFailed: 1,
 		})
-		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.requestForAttempt().Model)
 		return ra.hasWrittenResponse(), fmt.Errorf("channel %s not found (404): %v", ra.channel.Name, fwdErr)
 		// tryNextKey=false: 404 表示上游不支持此模型，切渠道
 
@@ -450,7 +466,7 @@ func (ra *relayAttempt) run() (bool, error) {
 			WaitTime:      span.Duration().Milliseconds(),
 			RequestFailed: 1,
 		})
-		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		balancer.RecordFailure(ra.channel.ID, ra.usedKey.ID, ra.requestForAttempt().Model)
 		if ra.failedKeys == nil {
 			ra.failedKeys = make(map[string]struct{})
 		}
@@ -502,7 +518,7 @@ func (ra *relayAttempt) applyTemporaryKeyCooldown() {
 	if ra.keyCooldown <= 0 {
 		return
 	}
-	dbmodel.RecordKeyModelTemporaryCooldown(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.keyCooldown)
+	dbmodel.RecordKeyModelTemporaryCooldown(ra.channel.ID, ra.usedKey.ID, ra.requestForAttempt().Model, ra.keyCooldown)
 }
 
 func (ra *relayAttempt) failureMessage(err error) string {
@@ -526,7 +542,7 @@ func (r *relayRun) noteUnavailable(statusCode int, retryAfter time.Duration) {
 
 func (r *relayRun) recordUnavailableKeys(channel *dbmodel.Channel, modelName string) {
 	for _, key := range channel.Keys {
-		if !key.Enabled || key.ChannelKey == "" {
+		if !key.Enabled || (key.ChannelKey == "" && channel.Type != dbmodel.ChannelTypeOpenCodeZen) {
 			continue
 		}
 		if retryAfter := dbmodel.GetKeyModelCooldownRemaining(channel.ID, key.ID, modelName); retryAfter > 0 {
@@ -653,7 +669,7 @@ func (ra *relayAttempt) forward() (int, error) {
 			return http.StatusInternalServerError, fmt.Errorf("privacy filter unavailable: %w", err)
 		}
 	}
-	if ra.internalRequest.RawRequest == nil {
+	if ra.requestForAttempt().RawRequest == nil {
 		return 0, fmt.Errorf("missing raw request")
 	}
 
@@ -673,7 +689,7 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 	middlewares := []pipeline.Middleware{
 		plugins.NewPrivacyFilter(ra.piiFilterEnabled),
-		plugins.NewRateLimiter(ra.channel, ra.usedKey.ID, ra.internalRequest.Model),
+		plugins.NewRateLimiter(ra.channel, ra.usedKey.ID, ra.requestForAttempt().Model),
 		relayMiddleware,
 		stream.EnsureUsage(),
 		plugins.NewStatusHandler(func(code int, retryAfter time.Duration) {
@@ -696,7 +712,7 @@ func (ra *relayAttempt) forward() (int, error) {
 	// See also: stream_timeout_test.go for writeStream timeout tests.
 	processCtx := ctx
 	var cancel context.CancelFunc
-	isStreaming := ra.internalRequest.Stream != nil && *ra.internalRequest.Stream
+	isStreaming := ra.requestForAttempt().Stream != nil && *ra.requestForAttempt().Stream
 	upstreamTimeout := ra.configuredDuration(ra.group.UpstreamTimeOut)
 	firstEventTimeout := ra.configuredDuration(ra.group.FirstTokenTimeOut)
 	if upstreamTimeout > 0 && !isStreaming {
@@ -714,13 +730,13 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 	result, err := pipeline.NewFactory(httpclient.NewHttpClientWithClient(httpClient)).
 		Pipeline(
-			&parsedRequestInbound{Inbound: ra.inAdapter, request: ra.internalRequest},
+			&parsedRequestInbound{Inbound: ra.inAdapter, request: ra.requestForAttempt()},
 			ra.outAdapter,
 			pipeline.WithMiddlewares(middlewares...),
 			pipeline.WithEmptyResponseDetection(),
 			pipeline.WithResponseTimeouts(firstEventTimeout, 0),
 		).
-		Process(processCtx, ra.internalRequest.RawRequest)
+		Process(processCtx, ra.requestForAttempt().RawRequest)
 	if err != nil {
 		if errors.Is(err, pipeline.ErrStreamFirstEventTimeout) && ctx.Err() == nil {
 			ra.statusCode = http.StatusGatewayTimeout
@@ -1225,6 +1241,26 @@ func (m *relayPipelineMiddleware) OnOutboundRawRequest(ctx context.Context, requ
 	}
 	m.attempt.upstreamURL = request.URL
 	m.attempt.applyChannelRequestOptions(request)
+	if isOpenCodeChannelType(m.attempt.channel.Type) {
+		if adapter, ok := m.attempt.outAdapter.(*openCodeZenFreeOutbound); ok {
+			if err := adapter.enforceProfile(request); err != nil {
+				return nil, err
+			}
+		}
+		sessions := openCodeZenFreeSessions
+		if m.attempt.channel.Type == dbmodel.ChannelTypeOpenCodeGo {
+			sessions = openCodeGoSessions
+		}
+		sessionID, err := sessions.zenFreeSessionID(m.attempt.usedKey, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		request.Headers.Set("x-opencode-session", sessionID)
+		request.Headers.Set("x-opencode-project", "global")
+		request.Headers.Set("x-opencode-client", "cli")
+		request.Headers.Set("User-Agent", "opencode/1.18.32 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14")
+		return request, nil
+	}
 	if isOpenCodeChannelType(m.attempt.channel.Type) || isOpenCodeEndpoint(request.URL) {
 		request.Headers.Set("x-opencode-session", openCodeSessions.sessionID(m.attempt.usedKey, time.Now()))
 		request.Headers.Del("x-opencode-client")

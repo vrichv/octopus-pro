@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -20,34 +21,40 @@ func ChannelHttpClient(channel *model.Channel) (*http.Client, error) {
 	}
 	if !channel.Proxy {
 		return client.GetHTTPClientSystemProxy(false)
-	} else if channel.ChannelProxy == nil || strings.TrimSpace(*channel.ChannelProxy) == "" {
+	} else if channel.ChannelProxyID == nil || *channel.ChannelProxyID == 0 {
 		return client.GetHTTPClientSystemProxy(true)
 	} else {
-		return client.GetHTTPClientCustomProxy(strings.TrimSpace(*channel.ChannelProxy))
+		proxyURL, err := op.ProxyGetURL(*channel.ChannelProxyID)
+		if err != nil {
+			return nil, err
+		}
+		return client.GetHTTPClientCustomProxy(proxyURL)
 	}
 }
 
 // KeyHttpClient 返回针对指定 ChannelKey 的 HTTP 客户端。
-// 代理优先级：key.KeyProxy > channel.ChannelProxy > 系统代理 > 直连
+// 代理优先级：key.KeyProxyID > channel.ChannelProxyID > 系统代理 > 直连
 func KeyHttpClient(channel *model.Channel, key *model.ChannelKey) (*http.Client, error) {
 	if channel == nil {
 		return nil, errors.New("channel is nil")
 	}
-	if key != nil && strings.TrimSpace(key.KeyProxy) != "" {
-		return client.GetHTTPClientCustomProxy(strings.TrimSpace(key.KeyProxy))
+	if key != nil && key.KeyProxyID > 0 {
+		proxyURL, err := op.ProxyGetURL(key.KeyProxyID)
+		if err != nil {
+			return nil, err
+		}
+		return client.GetHTTPClientCustomProxy(proxyURL)
 	}
 	return ChannelHttpClient(channel)
 }
 
-// ProxyDesc 返回用于日志的代理描述，脱敏展示。
+// ProxyDesc 返回用于日志的代理描述。
 func ProxyDesc(channel *model.Channel, key *model.ChannelKey) string {
-	if key != nil && strings.TrimSpace(key.KeyProxy) != "" {
-		proxy := strings.TrimSpace(key.KeyProxy)
-		return maskProxySuffix(proxy)
+	if key != nil && key.KeyProxyID > 0 {
+		return proxyName(key.KeyProxyID)
 	}
-	if channel != nil && channel.ChannelProxy != nil && strings.TrimSpace(*channel.ChannelProxy) != "" {
-		proxy := strings.TrimSpace(*channel.ChannelProxy)
-		return maskProxySuffix(proxy)
+	if channel != nil && channel.ChannelProxyID != nil && *channel.ChannelProxyID > 0 {
+		return proxyName(*channel.ChannelProxyID)
 	}
 	if channel != nil && channel.Proxy {
 		return "system"
@@ -55,22 +62,12 @@ func ProxyDesc(channel *model.Channel, key *model.ChannelKey) string {
 	return "none"
 }
 
-// maskProxySuffix 脱敏代理 URL，用单个 * 替换 password。
-// http://user:pass@host:port → http://user:*@host:port
-func maskProxySuffix(proxy string) string {
-	atIdx := strings.Index(proxy, "@")
-	if atIdx < 0 {
-		return proxy
+func proxyName(id int) string {
+	proxy, err := op.ProxyGet(id)
+	if err != nil || strings.TrimSpace(proxy.Name) == "" {
+		return fmt.Sprintf("proxy#%d", id)
 	}
-	protoEnd := strings.Index(proxy, "://")
-	if protoEnd < 0 {
-		return proxy
-	}
-	userPart := proxy[protoEnd+3 : atIdx]
-	if colonIdx := strings.Index(userPart, ":"); colonIdx >= 0 {
-		return proxy[:protoEnd+3+colonIdx+1] + "*" + proxy[atIdx:]
-	}
-	return proxy
+	return proxy.Name
 }
 
 // MaskKeySuffix 脱敏 Key，仅保留 *{最后3位}。

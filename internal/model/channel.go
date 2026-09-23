@@ -50,7 +50,7 @@ type Channel struct {
 	AutoGroup                 AutoGroupType  `json:"auto_group" gorm:"default:0"`
 	CustomHeader              []CustomHeader `json:"custom_header" gorm:"serializer:json"`
 	ParamOverride             *string        `json:"param_override"`
-	ChannelProxy              *string        `json:"channel_proxy"`
+	ChannelProxyID            *int           `json:"channel_proxy_id"`
 	Stats                     *StatsChannel  `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
 	MatchRegex                *string        `json:"match_regex"`
 	RateLimit                 string         `json:"rate_limit" gorm:"default:''"`       // key 级默认限流，如 "100/1h"
@@ -79,7 +79,7 @@ type ChannelKey struct {
 	LastUseTimeStamp      int64   `json:"last_use_time_stamp"`
 	TotalCost             float64 `json:"total_cost"`
 	Remark                string  `json:"remark"`
-	KeyProxy              string  `json:"key_proxy" gorm:"default:''"`
+	KeyProxyID            int     `json:"key_proxy_id" gorm:"default:0"`
 	ConsecutiveAuthErrors int     `json:"consecutive_auth_errors" gorm:"default:0"`
 	LastAuthErrorTime     int64   `json:"last_auth_error_time" gorm:"default:0"` // 上次认证错误时间，用于 5min 窗口重置
 	RetryAfter            int64   `json:"retry_after" gorm:"-"`                  // 动态冷却时间（秒），不持久化
@@ -99,7 +99,7 @@ type ChannelUpdateRequest struct {
 	AutoSync                  *bool           `json:"auto_sync,omitempty"`
 	AutoGroup                 *AutoGroupType  `json:"auto_group,omitempty"`
 	CustomHeader              *[]CustomHeader `json:"custom_header,omitempty"`
-	ChannelProxy              *string         `json:"channel_proxy,omitempty"`
+	ChannelProxyID            *int            `json:"channel_proxy_id,omitempty"`
 	ParamOverride             *string         `json:"param_override,omitempty"`
 	MatchRegex                *string         `json:"match_regex,omitempty"`
 	RateLimit                 *string         `json:"rate_limit,omitempty"`
@@ -118,7 +118,7 @@ type ChannelKeyAddRequest struct {
 	Enabled    bool   `json:"enabled"`
 	ChannelKey string `json:"channel_key" binding:"required"`
 	Remark     string `json:"remark"`
-	KeyProxy   string `json:"key_proxy"`
+	KeyProxyID int    `json:"key_proxy_id"`
 }
 
 type ChannelKeyUpdateRequest struct {
@@ -126,7 +126,7 @@ type ChannelKeyUpdateRequest struct {
 	Enabled    *bool   `json:"enabled,omitempty"`
 	ChannelKey *string `json:"channel_key,omitempty"`
 	Remark     *string `json:"remark,omitempty"`
-	KeyProxy   *string `json:"key_proxy,omitempty"`
+	KeyProxyID *int    `json:"key_proxy_id,omitempty"`
 }
 
 func (c *Channel) GetBaseUrl() string {
@@ -171,7 +171,7 @@ func (c *Channel) GetChannelKeys(modelName string) []ChannelKey {
 	nowSec := time.Now().Unix()
 	available := make([]ChannelKey, 0, len(c.Keys))
 	for _, k := range c.Keys {
-		if k.ChannelKey == "" {
+		if k.ChannelKey == "" && c.Type != ChannelTypeOpenCodeZen {
 			continue
 		}
 		if !k.Enabled {

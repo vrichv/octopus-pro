@@ -90,7 +90,11 @@ func createChannel(c *gin.Context) {
 		return
 	}
 	if err := op.ChannelCreate(&channel, c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, op.ErrProxyNotFound) {
+			status = http.StatusBadRequest
+		}
+		resp.Error(c, status, err.Error())
 		return
 	}
 	stats := op.StatsChannelGet(channel.ID)
@@ -115,7 +119,11 @@ func updateChannel(c *gin.Context) {
 	}
 	channel, err := op.ChannelUpdate(&req, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, op.ErrProxyNotFound) {
+			status = http.StatusBadRequest
+		}
+		resp.Error(c, status, err.Error())
 		return
 	}
 	stats := op.StatsChannelGet(channel.ID)

@@ -46,7 +46,60 @@ func ChannelList(ctx context.Context) ([]model.Channel, error) {
 	return channels, nil
 }
 
+func validateProxyID(id int) error {
+	if id == 0 {
+		return nil
+	}
+	if _, err := ProxyGet(id); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateChannelProxyReferences(channel *model.Channel) error {
+	if channel == nil {
+		return fmt.Errorf("channel is nil")
+	}
+	if channel.ChannelProxyID != nil {
+		if err := validateProxyID(*channel.ChannelProxyID); err != nil {
+			return fmt.Errorf("invalid channel proxy: %w", err)
+		}
+	}
+	for _, key := range channel.Keys {
+		if err := validateProxyID(key.KeyProxyID); err != nil {
+			return fmt.Errorf("invalid key proxy: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateChannelProxyUpdate(req *model.ChannelUpdateRequest) error {
+	if req.ChannelProxyID != nil {
+		if err := validateProxyID(*req.ChannelProxyID); err != nil {
+			return fmt.Errorf("invalid channel proxy: %w", err)
+		}
+	}
+	for _, key := range req.KeysToAdd {
+		if err := validateProxyID(key.KeyProxyID); err != nil {
+			return fmt.Errorf("invalid key proxy: %w", err)
+		}
+	}
+	for _, key := range req.KeysToUpdate {
+		if key.KeyProxyID != nil {
+			if err := validateProxyID(*key.KeyProxyID); err != nil {
+				return fmt.Errorf("invalid key proxy: %w", err)
+			}
+		}
+	}
+	return nil
+}
 func ChannelCreate(channel *model.Channel, ctx context.Context) error {
+	if err := validateChannelProxyReferences(channel); err != nil {
+		return err
+	}
+	if channel.Type == model.ChannelTypeOpenCodeZen && len(channel.Keys) == 0 {
+		channel.Keys = []model.ChannelKey{{Enabled: true}}
+	}
 	if err := db.GetDB().WithContext(ctx).Create(channel).Error; err != nil {
 		return err
 	}
@@ -245,9 +298,16 @@ func ChannelKeySaveDB(ctx context.Context) error {
 }
 
 func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channel, error) {
-	_, ok := channelCache.Get(req.ID)
+	cached, ok := channelCache.Get(req.ID)
 	if !ok {
 		return nil, fmt.Errorf("channel not found")
+	}
+	channelType := cached.Type
+	if req.Type != nil {
+		channelType = *req.Type
+	}
+	if err := validateChannelProxyUpdate(req); err != nil {
+		return nil, err
 	}
 
 	tx := db.GetDB().WithContext(ctx).Begin()
@@ -304,9 +364,9 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 		selectFields = append(selectFields, "custom_header")
 		updates.CustomHeader = *req.CustomHeader
 	}
-	if req.ChannelProxy != nil {
-		selectFields = append(selectFields, "channel_proxy")
-		updates.ChannelProxy = req.ChannelProxy
+	if req.ChannelProxyID != nil {
+		selectFields = append(selectFields, "channel_proxy_id")
+		updates.ChannelProxyID = req.ChannelProxyID
 	}
 	if req.ParamOverride != nil {
 		selectFields = append(selectFields, "param_override")
@@ -370,8 +430,8 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 			if ku.Remark != nil {
 				updates["remark"] = *ku.Remark
 			}
-			if ku.KeyProxy != nil {
-				updates["key_proxy"] = *ku.KeyProxy
+			if ku.KeyProxyID != nil {
+				updates["key_proxy_id"] = *ku.KeyProxyID
 			}
 			if len(updates) == 0 {
 				continue
@@ -394,7 +454,7 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 				Enabled:    ka.Enabled,
 				ChannelKey: ka.ChannelKey,
 				Remark:     ka.Remark,
-				KeyProxy:   ka.KeyProxy,
+				KeyProxyID: ka.KeyProxyID,
 			})
 		}
 		if err := tx.Create(&newKeys).Error; err != nil {
@@ -403,6 +463,19 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 		}
 	}
 
+	if channelType == model.ChannelTypeOpenCodeZen {
+		var keyCount int64
+		if err := tx.Model(&model.ChannelKey{}).Where("channel_id = ?", req.ID).Count(&keyCount).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to count channel keys: %w", err)
+		}
+		if keyCount == 0 {
+			if err := tx.Create(&model.ChannelKey{ChannelID: req.ID, Enabled: true}).Error; err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("failed to create keyless Zen channel key: %w", err)
+			}
+		}
+	}
 	if err := tx.Commit().Error; err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}

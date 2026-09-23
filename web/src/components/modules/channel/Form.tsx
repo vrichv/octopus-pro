@@ -9,6 +9,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ProxySelect } from '@/components/modules/proxy/ProxySelect';
 import { toast } from '@/components/common/Toast';
 import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -22,7 +23,7 @@ export interface ChannelKeyFormItem {
     last_use_time_stamp?: number;
     total_cost?: number;
     remark?: string;
-    key_proxy?: string;
+    key_proxy_id?: number;
 }
 
 export interface ChannelFormData {
@@ -30,7 +31,7 @@ export interface ChannelFormData {
     type: ChannelType;
     base_urls: Channel['base_urls'];
     custom_header: Channel['custom_header'];
-    channel_proxy: string;
+    channel_proxy_id: number;
     param_override: string;
     keys: ChannelKeyFormItem[];
     model: string;
@@ -191,7 +192,7 @@ export function ChannelForm({
                     .filter((k) => k.channel_key.trim())
                     .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key.trim() })),
                 proxy: formData.proxy,
-                channel_proxy: formData.channel_proxy?.trim() || null,
+                channel_proxy_id: formData.channel_proxy_id || null,
                 match_regex: formData.match_regex.trim() || null,
                 custom_header: formData.custom_header?.filter((h) => h.header_key.trim()) || [],
             },
@@ -306,7 +307,7 @@ export function ChannelForm({
                     .filter((k) => k.channel_key.trim())
                     .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key.trim() })),
                 proxy: formData.proxy,
-                channel_proxy: formData.channel_proxy?.trim() || null,
+                channel_proxy_id: formData.channel_proxy_id || null,
                 match_regex: formData.match_regex.trim() || null,
                 custom_header: formData.custom_header?.filter((h) => h.header_key.trim()) || [],
             },
@@ -552,12 +553,11 @@ export function ChannelForm({
                                 placeholder={t('remark')}
                                 className="rounded-xl w-32"
                             />
-                            <Input
-                                type="text"
-                                value={k.key_proxy ?? ''}
-                                onChange={(e) => handleUpdateKey(idx, { key_proxy: e.target.value })}
-                                placeholder={t('keyProxyPlaceholder')}
-                                className="rounded-xl w-40"
+                            <ProxySelect
+                                value={k.key_proxy_id ?? 0}
+                                onChange={(value) => handleUpdateKey(idx, { key_proxy_id: value })}
+                                noneLabel={t('keyProxyNone')}
+                                className="w-40"
                             />
                             <Switch
                                 checked={k.enabled}
@@ -719,13 +719,11 @@ export function ChannelForm({
                                 <label htmlFor={`${idPrefix}-channel-proxy`} className="text-sm font-medium text-card-foreground">
                                     {t('channelProxy')}
                                 </label>
-                                <Input
+                                <ProxySelect
                                     id={`${idPrefix}-channel-proxy`}
-                                    type="text"
-                                    value={formData.channel_proxy}
-                                    onChange={(e) => onFormDataChange({ ...formData, channel_proxy: e.target.value })}
-                                    placeholder={t('channelProxyPlaceholder')}
-                                    className="rounded-xl"
+                                    value={formData.channel_proxy_id ?? 0}
+                                    onChange={(value) => onFormDataChange({ ...formData, channel_proxy_id: value })}
+                                    noneLabel={t('channelProxyNone')}
                                 />
                             </div>
                         </div>

@@ -2,14 +2,13 @@ package model
 
 import (
 	"fmt"
-	"net/url"
 	"strconv"
 )
 
 type SettingKey string
 
 const (
-	SettingKeyProxyURL                  SettingKey = "proxy_url"
+	SettingKeyProxyID                   SettingKey = "proxy_id"                     // 系统代理引用的 Proxy ID，0 表示未配置
 	SettingKeyStatsSaveInterval         SettingKey = "stats_save_interval"          // 将统计信息写入数据库的周期(分钟)
 	SettingKeyModelInfoUpdateInterval   SettingKey = "model_info_update_interval"   // 模型信息更新间隔(小时)
 	SettingKeySyncLLMInterval           SettingKey = "sync_llm_interval"            // LLM 同步间隔(小时)
@@ -30,7 +29,7 @@ type Setting struct {
 
 func DefaultSettings() []Setting {
 	return []Setting{
-		{Key: SettingKeyProxyURL, Value: ""},
+		{Key: SettingKeyProxyID, Value: "0"},
 		{Key: SettingKeyStatsSaveInterval, Value: "10"},          // 默认10分钟保存一次统计信息
 		{Key: SettingKeyCORSAllowOrigins, Value: ""},             // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
 		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"},    // 默认24小时更新一次模型信息
@@ -59,24 +58,13 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("relay log keep enabled must be true or false")
 		}
 		return nil
-	case SettingKeyProxyURL:
+	case SettingKeyProxyID:
 		if s.Value == "" {
 			return nil
 		}
-		parsedURL, err := url.Parse(s.Value)
-		if err != nil {
-			return fmt.Errorf("proxy URL is invalid: %w", err)
-		}
-		validSchemes := map[string]bool{
-			"http":   true,
-			"https":  true,
-			"socks5": true,
-		}
-		if !validSchemes[parsedURL.Scheme] {
-			return fmt.Errorf("proxy URL scheme must be http, https, socks, or socks5")
-		}
-		if parsedURL.Host == "" {
-			return fmt.Errorf("proxy URL must have a host")
+		id, err := strconv.Atoi(s.Value)
+		if err != nil || id < 0 {
+			return fmt.Errorf("proxy id must be a non-negative integer")
 		}
 		return nil
 	}

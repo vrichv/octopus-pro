@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -73,7 +74,7 @@ func TestOpenCodeZenRoutesModelsAndPreservesProxySession(t *testing.T) {
 			} else if got.session != session {
 				t.Fatalf("session changed across protocol routes: %q != %q", got.session, session)
 			}
-			if got.agent != "omp/18.1.14" || got.client != "" {
+			if got.agent != "opencode/1.18.32 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14" || got.client != "cli" {
 				t.Fatalf("unexpected OpenCode headers: %+v", got)
 			}
 		})
@@ -107,5 +108,79 @@ func TestOpenCodeGoRoutesModelsIndependently(t *testing.T) {
 	}
 	if raw.URL != "https://opencode.ai/zen/go/v1/messages" {
 		t.Fatalf("Go URL = %q", raw.URL)
+	}
+}
+
+func TestOpenCodeZenMetadataProtocols(t *testing.T) {
+	tests := []struct {
+		name, model, provider string
+		want                  openCodeProtocol
+	}{
+		{name: "mimo free defaults to chat", model: "mimo-v2.6-flash-free", want: openCodeProtocolChat},
+		{name: "openai sdk uses responses", model: "new-model", provider: "@ai-sdk/openai", want: openCodeProtocolResponses},
+		{name: "compatible sdk uses chat", model: "new-model", provider: "@ai-sdk/openai-compatible", want: openCodeProtocolChat},
+		{name: "anthropic sdk uses messages", model: "new-model", provider: "@ai-sdk/anthropic", want: openCodeProtocolAnthropic},
+		{name: "google sdk uses gemini", model: "new-model", provider: "@ai-sdk/google", want: openCodeProtocolGemini},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := openCodeModelProtocol(test.model, test.provider); got != test.want {
+				t.Fatalf("protocol = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestOpenCodeZenChatKeepsCurrentClientToolSchema(t *testing.T) {
+	request := &llm.Request{
+		APIFormat: llm.APIFormatOpenAIChatCompletion,
+		Model:     "mimo-v2.6-flash-free",
+		Messages:  []llm.Message{{Role: "user", Content: llm.MessageContent{Content: new("hello")}}},
+		Tools: []llm.Tool{{
+			Type: "function",
+			Function: llm.Function{
+				Name:       "bash",
+				Parameters: []byte(`{"type":"object","properties":{"command":{"type":"string"},"timeout":{"type":"integer","minimum":1,"maximum":600000},"workdir":{"type":"string"}},"required":["command"]}`),
+			},
+		}},
+	}
+	adapter, err := newOutbound(dbmodel.ChannelTypeOpenCodeZen, request, "https://opencode.ai/zen/v1", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := adapter.TransformRequest(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Tools []struct {
+			Function struct {
+				Name       string          `json:"name"`
+				Parameters json.RawMessage `json:"parameters"`
+			} `json:"function"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(raw.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(body.Tools))
+	for _, tool := range body.Tools {
+		names = append(names, tool.Function.Name)
+	}
+	// Client schema is kept; the free tier's mandatory `read` is added from the profile.
+	if len(body.Tools) != 2 || body.Tools[0].Function.Name != "bash" || body.Tools[1].Function.Name != "read" {
+		t.Fatalf("unexpected Mimo tools %v", names)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(body.Tools[0].Function.Parameters, &schema); err != nil {
+		t.Fatal(err)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing tool properties: %s", raw.Body)
+	}
+	timeout, ok := properties["timeout"].(map[string]any)
+	if !ok || timeout["maximum"] != float64(600000) {
+		t.Fatalf("timeout schema = %v, want maximum 600000", properties["timeout"])
 	}
 }

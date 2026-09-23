@@ -5,7 +5,7 @@ import {
     MorphingDialogDescription,
     useMorphingDialog,
 } from '@/components/ui/morphing-dialog';
-import { useCreateChannel, ChannelType, AutoGroupType } from '@/api/endpoints/channel';
+import { useCreateChannel, ChannelType, AutoGroupType, normalizeChannelKey } from '@/api/endpoints/channel';
 import { useTranslations } from 'next-intl';
 import { ChannelForm, type ChannelFormData } from './Form';
 
@@ -17,7 +17,7 @@ export function CreateDialogContent() {
         type: ChannelType.OpenAIChat,
         base_urls: [{ url: 'https://api.openai.com/v1', delay: 0 }],
         custom_header: [],
-        channel_proxy: '',
+        channel_proxy_id: 0,
         param_override: '',
         keys: [{ enabled: true, channel_key: '', remark: '' }],
         model: '',
@@ -43,7 +43,7 @@ export function CreateDialogContent() {
         if (formData.model.trim()) return true;
         if (formData.custom_model.trim()) return true;
         if (formData.base_urls?.some((u) => u.url.trim() && u.url.trim() !== 'https://api.openai.com/v1')) return true;
-        if (formData.channel_proxy.trim()) return true;
+        if (formData.channel_proxy_id) return true;
         if (formData.match_regex.trim()) return true;
         if (formData.rate_limit.trim()) return true;
         if (formData.model_rate_limit.trim()) return true;
@@ -62,13 +62,13 @@ export function CreateDialogContent() {
             delay: Number(u.delay || 0),
         }));
         const normalizedKeys = formData.keys
-            .filter((k) => k.channel_key.trim())
-            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key, remark: k.remark ?? '', key_proxy: k.key_proxy?.trim() || '' }));
+            .map((k) => ({ ...k, channel_key: normalizeChannelKey(k.channel_key) }))
+            .filter((k) => k.channel_key || formData.type === ChannelType.OpenCodeZen)
+            .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key, remark: k.remark ?? '', key_proxy_id: k.key_proxy_id ?? 0 }));
         const normalizedHeaders = (formData.custom_header ?? [])
             .map((h) => ({ header_key: h.header_key.trim(), header_value: h.header_value }))
             .filter((h) => h.header_key && h.header_value !== '');
 
-        const channelProxy = formData.channel_proxy.trim();
         const paramOverride = formData.param_override.trim();
         createChannel.mutate(
             {
@@ -84,7 +84,7 @@ export function CreateDialogContent() {
                 auto_sync: formData.auto_sync,
                 auto_group: formData.auto_group,
                 custom_header: normalizedHeaders,
-                channel_proxy: channelProxy,
+                channel_proxy_id: formData.channel_proxy_id || 0,
                 param_override: paramOverride,
                 match_regex: formData.match_regex.trim(),
                 rate_limit: formData.rate_limit.trim(),
@@ -102,7 +102,7 @@ export function CreateDialogContent() {
                         type: ChannelType.OpenAIChat,
                         base_urls: [{ url: 'https://api.openai.com/v1', delay: 0 }],
                         custom_header: [],
-                        channel_proxy: '',
+                        channel_proxy_id: 0,
                         param_override: '',
                         keys: [{ enabled: true, channel_key: '', remark: '' }],
                         model: '',

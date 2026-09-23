@@ -5,3 +5,7 @@ static/out/*
 .vscode
 run/
 .omp/
+.ai-jail
+.pnpm-store/
+.docs/
+

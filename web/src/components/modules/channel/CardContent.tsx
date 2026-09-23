@@ -16,7 +16,7 @@ import {
     Gauge,
     ThermometerSun,
 } from 'lucide-react';
-import { useUpdateChannel, useDeleteChannel, useSchedulingStatus, type Channel, type UpdateChannelRequest, type KeyStatusEntry, type ModelStatusEntry } from '@/api/endpoints/channel';
+import { ChannelType, normalizeChannelKey, useUpdateChannel, useDeleteChannel, useSchedulingStatus, type Channel, type UpdateChannelRequest, type KeyStatusEntry, type ModelStatusEntry } from '@/api/endpoints/channel';
 import {
     MorphingDialogTitle,
     MorphingDialogDescription,
@@ -44,7 +44,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         enabled: channel.enabled,
         base_urls: channel.base_urls?.length ? channel.base_urls : [{ url: '', delay: 0 }],
         custom_header: channel.custom_header ?? [],
-        channel_proxy: channel.channel_proxy ?? '',
+        channel_proxy_id: channel.channel_proxy_id ?? 0,
         param_override: channel.param_override ?? '',
         keys: channel.keys.length > 0
             ? channel.keys.map((k) => ({
@@ -55,7 +55,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                 last_use_time_stamp: k.last_use_time_stamp,
                 total_cost: k.total_cost,
                 remark: k.remark,
-                key_proxy: k.key_proxy,
+                key_proxy_id: k.key_proxy_id,
             }))
             : [{ enabled: true, channel_key: '', remark: '' }],
         model: channel.model,
@@ -96,7 +96,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             formData.auto_sync !== ch.auto_sync ||
             formData.auto_group !== ch.auto_group ||
             !headersEqual(formData.custom_header, ch.custom_header) ||
-            formData.channel_proxy.trim() !== (ch.channel_proxy ?? '') ||
+            (formData.channel_proxy_id ?? 0) !== (ch.channel_proxy_id ?? 0) ||
             formData.param_override.trim() !== (ch.param_override ?? '') ||
             formData.match_regex.trim() !== (ch.match_regex ?? '') ||
             formData.rate_limit.trim() !== (ch.rate_limit ?? '') ||
@@ -106,13 +106,13 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             formData.circuit_breaker_cooldown.trim() !== (ch.circuit_breaker_cooldown != null ? String(ch.circuit_breaker_cooldown) : '') ||
             formData.circuit_breaker_max_cooldown.trim() !== (ch.circuit_breaker_max_cooldown != null ? String(ch.circuit_breaker_max_cooldown) : '') ||
             formData.keys.some((k) => {
-                if (!k.id) return k.channel_key.trim() !== '';
+                if (!k.id) return normalizeChannelKey(k.channel_key) !== '';
                 const orig = ch.keys.find((c) => c.id === k.id);
                 if (!orig) return true;
                 return k.enabled !== orig.enabled ||
-                    k.channel_key !== orig.channel_key ||
+                    normalizeChannelKey(k.channel_key) !== normalizeChannelKey(orig.channel_key) ||
                     (k.remark ?? '') !== orig.remark ||
-                    (k.key_proxy ?? '') !== (orig.key_proxy ?? '');
+                    (k.key_proxy_id ?? 0) !== (orig.key_proxy_id ?? 0);
             })
         );
     })();
@@ -146,11 +146,10 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                 .filter((h) => h.header_key && h.header_value !== '');
         }
 
-        const nextChannelProxy = formData.channel_proxy.trim();
-        const curChannelProxy = channel.channel_proxy ?? '';
-        if (nextChannelProxy !== curChannelProxy) {
-            // Empty string means "clear" for patch semantics; backend maps it to NULL.
-            req.channel_proxy = nextChannelProxy;
+        const nextChannelProxyID = formData.channel_proxy_id ?? 0;
+        const curChannelProxyID = channel.channel_proxy_id ?? 0;
+        if (nextChannelProxyID !== curChannelProxyID) {
+            req.channel_proxy_id = nextChannelProxyID;
         }
 
         const nextParamOverride = formData.param_override.trim();
@@ -187,26 +186,28 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         const keys_to_delete = originalKeys.filter((k) => !nextIDs.has(k.id)).map((k) => k.id);
 
         const keys_to_add = nextKeys
-            .filter((k) => !k.id && k.channel_key.trim())
+            .map((k) => ({ ...k, channel_key: normalizeChannelKey(k.channel_key) }))
+            .filter((k) => !k.id && (k.channel_key || formData.type === ChannelType.OpenCodeZen))
             .map((k) => ({
                 enabled: k.enabled,
                 channel_key: k.channel_key,
                 remark: k.remark ?? '',
-                key_proxy: k.key_proxy?.trim() || '',
+                key_proxy_id: k.key_proxy_id ?? 0,
             }));
 
         const keys_to_update = nextKeys
             .filter((k) => typeof k.id === 'number' && originalByID.has(k.id as number))
             .map((k) => {
                 const orig = originalByID.get(k.id as number)!;
-                const u: { id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy?: string } = { id: k.id as number };
+                const normalizedKey = normalizeChannelKey(k.channel_key);
+                const u: { id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy_id?: number } = { id: k.id as number };
                 if (k.enabled !== orig.enabled) u.enabled = k.enabled;
-                if (k.channel_key !== orig.channel_key) u.channel_key = k.channel_key;
+                if (normalizedKey !== normalizeChannelKey(orig.channel_key)) u.channel_key = normalizedKey;
                 if ((k.remark ?? '') !== orig.remark) u.remark = k.remark ?? '';
-                if ((k.key_proxy ?? '') !== (orig.key_proxy ?? '')) u.key_proxy = k.key_proxy ?? '';
+                if ((k.key_proxy_id ?? 0) !== (orig.key_proxy_id ?? 0)) u.key_proxy_id = k.key_proxy_id ?? 0;
                 return Object.keys(u).length > 1 ? u : null;
             })
-            .filter((u) => u !== null) as Array<{ id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy?: string }>;
+            .filter((u) => u !== null) as Array<{ id: number; enabled?: boolean; channel_key?: string; remark?: string; key_proxy_id?: number }>;
 
         if (keys_to_add.length > 0) req.keys_to_add = keys_to_add;
         if (keys_to_update.length > 0) req.keys_to_update = keys_to_update;
@@ -479,7 +480,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                     </span>
                                                 )}
 
-                                                {key.key_proxy && (
+                                                {key.key_proxy_id > 0 && (
                                                     <span className="flex items-center gap-1 shrink-0" title={t('keyProxyEnabled')}>
                                                         <Globe className="size-3 text-muted-foreground" />
                                                     </span>

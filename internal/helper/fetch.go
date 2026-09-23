@@ -15,7 +15,7 @@ import (
 
 func FetchModels(ctx context.Context, request model.Channel) ([]string, error) {
 	key := request.GetChannelKey("")
-	if key.ChannelKey == "" {
+	if key.ChannelKey == "" && request.Type != model.ChannelTypeOpenCodeZen {
 		return nil, fmt.Errorf("channel has no available key")
 	}
 	client, err := KeyHttpClient(&request, &key)
@@ -69,7 +69,9 @@ func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.C
 		baseURL+"/models",
 		nil,
 	)
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	applyCustomHeaders(req, request)
 
 	resp, err := client.Do(req)
