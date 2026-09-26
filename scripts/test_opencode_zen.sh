@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://100.111.82.3:8080}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
 API_KEY="${API_KEY:-}"
 MODEL="${MODEL:-mimo-v2.6-flash-free}"
 PROMPT="${PROMPT:-Reply with the single word ok}"

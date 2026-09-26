@@ -29,9 +29,13 @@ func (t *openCodeZenFreeOutbound) TransformRequest(ctx context.Context, request 
 	if request == nil {
 		return nil, fmt.Errorf("OpenCode Zen Free: missing request")
 	}
+	// The Free gateway does not validate the system prompt (custom or absent
+	// system both pass, see opencode-zen-free-tier.md), so the client's own
+	// system/developer messages are forwarded as-is. Injecting the captured
+	// OpenCode prompt would leak its capture environment (workdir, date,
+	// model name) and contradict the client's real context.
 	var profile struct {
-		System []llm.Message `json:"system"`
-		Tools  []llm.Tool    `json:"tools"`
+		Tools []llm.Tool `json:"tools"`
 	}
 	if err := json.Unmarshal(openCodeZenFreeProfile, &profile); err != nil {
 		return nil, fmt.Errorf("OpenCode Zen Free profile: %w", err)
@@ -47,7 +51,7 @@ func (t *openCodeZenFreeOutbound) TransformRequest(ctx context.Context, request 
 	adapted := *request
 	adapted.TransformerMetadata = maps.Clone(request.TransformerMetadata)
 	adapted.ProviderExtensions = llm.CloneProviderExtensions(request.ProviderExtensions)
-	adapted.Messages = slices.Clone(profile.System)
+	adapted.Messages = make([]llm.Message, 0, len(request.Messages))
 	adapted.Tools = slices.Clone(profile.Tools)
 	adapted.Stream = new(true)
 	adapted.TransformOptions.ArrayInputs = new(true)
@@ -94,9 +98,6 @@ func (t *openCodeZenFreeOutbound) TransformRequest(ctx context.Context, request 
 		}
 	}
 	for _, original := range request.Messages {
-		if original.Role == "system" || original.Role == "developer" {
-			continue
-		}
 		message := original
 		message.ToolCalls = slices.Clone(original.ToolCalls)
 		for i := range message.ToolCalls {
